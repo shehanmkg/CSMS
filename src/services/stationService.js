@@ -103,14 +103,46 @@ function handleBootNotification(chargePointId, bootData) {
  * @param {object} statusData - Status notification data
  */
 function handleStatusNotification(chargePointId, statusData) {
-  const { status, errorCode, info, timestamp } = statusData;
-  
-  updateChargePointStatus(chargePointId, status, {
-    errorCode: errorCode || null,
-    info: info || null,
-    connectorId: statusData.connectorId,
-    timestampFromCP: timestamp ? new Date(timestamp) : null
-  });
+  const { status, errorCode, info, timestamp, connectorId } = statusData;
+
+  // If connector ID is 0, it indicates the main charge point status (per OCPP 1.6 spec)
+  if (connectorId === 0) {
+    updateChargePointStatus(chargePointId, status, {
+      errorCode: errorCode || null,
+      info: info || null,
+      timestampFromCP: timestamp ? new Date(timestamp) : null
+    });
+    logger.debug('Updated main charge point status', {
+      chargePointId,
+      status,
+      errorCode
+    });
+  } else {
+    // For specific connectors, update the connector status in the connectors object
+    const existingData = chargePoints.get(chargePointId) || {};
+    const connectors = existingData.connectors || {};
+    const connectorData = connectors[connectorId] || {};
+    
+    // Update connector status
+    connectors[connectorId] = {
+      ...connectorData,
+      status: status,
+      errorCode: errorCode || null,
+      info: info || null,
+      statusUpdatedAt: new Date(),
+      timestampFromCP: timestamp ? new Date(timestamp) : null
+    };
+    
+    // Update charge point data with connector information
+    updateChargePoint(chargePointId, { connectors });
+    
+    logger.debug('Updated connector status', {
+      chargePointId,
+      connectorId,
+      status,
+      errorCode
+    });
+  }
 }
 
 /**

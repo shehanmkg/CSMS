@@ -1,0 +1,39 @@
+graph TD
+  subgraph User
+    A[User App]
+    B[Web Interface]
+  end
+
+  subgraph Backend
+    C[OCPP Gateway]
+    D[Transaction Processor]
+    E[Payment Service]
+    F[User Management Service]
+    G[Admin Dashboard]
+  end
+
+  subgraph Database
+    H[(MongoDB)]
+    I[Charging Location]
+    J[Charging Station]
+  end
+
+  subgraph External Services
+    K[Payment Gateways]
+    L[MicroOCPP Simulator]
+    M[Google Maps API]
+  end
+
+  A -->|View Charging Locations| M
+  A -->|Manage Charging| C
+  B -->|Manage Stations/Users| G
+  I -- "1..*" --> J
+  L <-->|OCPP Communication| C
+  C -->|Update Station Status| J
+  C -->|Transaction Data| D
+  D -->|Store Transactions| H
+  D -->|Process Payments| E
+  E -->|Payment Requests| K
+  F -->|User Data| H
+  G -->|Admin Operations| H
+  G -->|Analytics| H

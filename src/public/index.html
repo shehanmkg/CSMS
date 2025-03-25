@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSMS Dashboard</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1>Charging Station Management System</h1>
+      <div class="header-stats">
+        <div class="stat-box">
+          <span class="stat-label">Active Stations</span>
+          <span id="active-stations-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Active Transactions</span>
+          <span id="active-transactions-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Total Energy</span>
+          <span id="total-energy" class="stat-value">0 kWh</span>
+        </div>
+      </div>
+    </header>
+
+    <nav class="app-nav">
+      <ul>
+        <li><a href="#stations" class="active" data-section="stations-section">Stations</a></li>
+        <li><a href="#transactions" data-section="transactions-section">Transactions</a></li>
+        <li><a href="#analytics" data-section="analytics-section">Analytics</a></li>
+      </ul>
+    </nav>
+
+    <main class="app-main">
+      <section id="stations-section" class="content-section active">
+        <h2>Charging Stations</h2>
+        <div class="filter-bar">
+          <input type="text" id="station-search" placeholder="Search stations...">
+          <select id="status-filter">
+            <option value="all">All Statuses</option>
+            <option value="Available">Available</option>
+            <option value="Charging">Charging</option>
+            <option value="Faulted">Faulted</option>
+            <option value="Unavailable">Unavailable</option>
+            <option value="Reserved">Reserved</option>
+          </select>
+        </div>
+        <div class="stations-grid" id="stations-grid">
+          <!-- Station cards will be rendered here -->
+          <div class="loading">Loading stations...</div>
+        </div>
+      </section>
+
+      <section id="transactions-section" class="content-section">
+        <h2>Charging Transactions</h2>
+        <div class="filter-bar">
+          <input type="text" id="transaction-search" placeholder="Search transactions...">
+          <select id="transaction-filter">
+            <option value="all">All Transactions</option>
+            <option value="active">Active Only</option>
+            <option value="completed">Completed Only</option>
+          </select>
+        </div>
+        <table id="transactions-table" class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Station</th>
+              <th>Connector</th>
+              <th>Started</th>
+              <th>Duration</th>
+              <th>Energy</th>
+              <th>Status</th>
+              <th>ID Tag</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Transaction rows will be rendered here -->
+            <tr>
+              <td colspan="8" class="loading">Loading transactions...</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="analytics-section" class="content-section">
+        <h2>Analytics & Insights</h2>
+        
+        <div class="analytics-grid">
+          <div class="analytics-card">
+            <h3>Energy Consumption</h3>
+            <div class="chart-container">
+              <canvas id="energy-chart"></canvas>
+            </div>
+          </div>
+          
+          <div class="analytics-card">
+            <h3>Station Utilization</h3>
+            <div class="chart-container">
+              <canvas id="utilization-chart"></canvas>
+            </div>
+          </div>
+          
+          <div class="analytics-card">
+            <h3>Status Distribution</h3>
+            <div class="chart-container">
+              <canvas id="status-chart"></canvas>
+            </div>
+          </div>
+          
+          <div class="analytics-card">
+            <h3>Transaction Metrics</h3>
+            <div class="metrics-list">
+              <div class="metric-item">
+                <span class="metric-label">Avg. Session Duration</span>
+                <span id="avg-duration" class="metric-value">0 min</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Avg. Energy per Session</span>
+                <span id="avg-energy" class="metric-value">0 kWh</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Total Sessions Today</span>
+                <span id="total-sessions" class="metric-value">0</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-label">Peak Usage Time</span>
+                <span id="peak-time" class="metric-value">--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>CSMS Dashboard v1.0 | Last updated: <span id="last-updated">--</span></p>
+    </footer>
+  </div>
+
+  <!-- Templates -->
+  <template id="station-card-template">
+    <div class="station-card" data-id="">
+      <div class="station-header">
+        <h3 class="station-name"></h3>
+        <span class="station-status"></span>
+      </div>
+      <div class="station-details">
+        <div class="detail-item">
+          <span class="detail-label">Model:</span>
+          <span class="station-model"></span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Vendor:</span>
+          <span class="station-vendor"></span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Last Heartbeat:</span>
+          <span class="station-heartbeat"></span>
+        </div>
+      </div>
+      <div class="connector-list">
+        <!-- Connectors will be rendered here -->
+      </div>
+      <div class="station-footer">
+        <button class="view-details-btn">View Details</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="connector-item-template">
+    <div class="connector-item">
+      <div class="connector-header">
+        <span class="connector-id"></span>
+        <span class="connector-status"></span>
+      </div>
+      <div class="connector-meter">
+        <span class="meter-value"></span>
+        <span class="meter-unit"></span>
+      </div>
+    </div>
+  </template>
+
+  <!-- Modal for station details -->
+  <div id="station-modal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal">&times;</span>
+      <h2 id="modal-station-name"></h2>
+      
+      <div class="modal-tabs">
+        <button class="tab-btn active" data-tab="info-tab">Information</button>
+        <button class="tab-btn" data-tab="transactions-tab">Transactions</button>
+        <button class="tab-btn" data-tab="logs-tab">Logs</button>
+      </div>
+      
+      <div id="info-tab" class="tab-content active">
+        <div class="info-grid">
+          <!-- Station info will be rendered here -->
+        </div>
+      </div>
+      
+      <div id="transactions-tab" class="tab-content">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Started</th>
+              <th>Duration</th>
+              <th>Energy</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="modal-transactions">
+            <!-- Transaction rows will be rendered here -->
+          </tbody>
+        </table>
+      </div>
+      
+      <div id="logs-tab" class="tab-content">
+        <div class="log-container" id="modal-logs">
+          <!-- Log entries will be rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script>
+    // Load Chart.js with improved fallback mechanism
+    function loadScript(src, fallbackSrc, callback) {
+      // Check if Chart is already defined
+      if (typeof Chart !== 'undefined') {
+        if (callback) callback();
+        return;
+      }
+      
+      var script = document.createElement('script');
+      script.src = src;
+      
+      // Success handler
+      script.onload = function() {
+        console.log('Successfully loaded Chart.js from: ' + src);
+        if (callback) callback();
+      };
+      
+      // Error handler - try fallback
+      script.onerror = function() {
+        console.warn('Failed to load Chart.js from ' + src + ', using fallback');
+        
+        // Only try fallback if it's different from the original source
+        if (fallbackSrc && fallbackSrc !== src) {
+          var fallbackScript = document.createElement('script');
+          fallbackScript.src = fallbackSrc;
+          
+          fallbackScript.onload = function() {
+            console.log('Successfully loaded Chart.js from fallback: ' + fallbackSrc);
+            if (callback) callback();
+          };
+          
+          fallbackScript.onerror = function() {
+            console.error('Failed to load Chart.js from fallback: ' + fallbackSrc);
+            if (callback) callback(new Error('Failed to load Chart.js'));
+          };
+          
+          document.body.appendChild(fallbackScript);
+        } else {
+          if (callback) callback(new Error('Failed to load Chart.js'));
+        }
+      };
+      
+      document.body.appendChild(script);
+    }
+    
+    // Try loading from CDN, fallback to local, then to another CDN
+    loadScript(
+      'https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js',  // Primary CDN
+      'lib/chart.min.js',                                             // Local fallback
+      function(err) {
+        if (err) {
+          // If both failed, try another CDN as last resort
+          loadScript('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.2/chart.umd.min.js', null);
+        }
+      }
+    );
+  </script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/stations.js"></script>
+  <script src="js/transactions.js"></script>
+  <script src="js/analytics.js"></script>
+</body>
+</html> 
