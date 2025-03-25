@@ -165,8 +165,9 @@ function handleHeartbeat(chargePointId) {
  * @param {number} meterValue.value - The actual meter reading value
  * @param {string} meterValue.unit - The unit of the meter reading (e.g., 'Wh')
  * @param {string} meterValue.timestamp - Timestamp when the reading was taken
+ * @param {object} additionalValues - Optional additional measurement values
  */
-function updateChargePointMeterValue(chargePointId, connectorId, meterValue) {
+function updateChargePointMeterValue(chargePointId, connectorId, meterValue, additionalValues = {}) {
   if (!chargePointId) {
     throw new Error('chargePointId is required');
   }
@@ -182,7 +183,7 @@ function updateChargePointMeterValue(chargePointId, connectorId, meterValue) {
   const connectors = existingData.connectors || {};
   const connectorData = connectors[connectorId] || {};
   
-  // Update connector with meter value
+  // Update connector with meter value and additional measurements
   connectors[connectorId] = {
     ...connectorData,
     meterValue: {
@@ -190,7 +191,9 @@ function updateChargePointMeterValue(chargePointId, connectorId, meterValue) {
       unit: meterValue.unit,
       timestamp: meterValue.timestamp,
       updatedAt: new Date()
-    }
+    },
+    // Add additional measurements if provided
+    ...additionalValues
   };
   
   // Update charge point data with connector information

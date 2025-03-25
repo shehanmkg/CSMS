@@ -5,7 +5,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const path = require('path');
 const { logger } = require('./utils/logger');
-const { WebSocketServer } = require('./websocket/server');
+const WebSocketServer = require('./websocket/server');
 const { errorHandler } = require('./middleware/errorHandler');
 const stationService = require('./services/stationService');
 const transactionService = require('./services/transactionService');
@@ -52,6 +52,75 @@ app.get('/api/stations', (req, res) => {
   } catch (error) {
     logger.error('Error getting stations', { error: error.message });
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Payment processing API
+app.post('/api/payment/complete', express.json(), async (req, res) => {
+  try {
+    const { stationId, connectorId, paymentId } = req.body;
+    
+    if (!stationId || !connectorId || !paymentId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        requiredFields: ['stationId', 'connectorId', 'paymentId']
+      });
+    }
+    
+    logger.info('Processing payment and initiating charging', {
+      stationId,
+      connectorId,
+      paymentId
+    });
+    
+    // In a production environment, you would verify the payment with Stripe here
+    // const stripeResult = await verifyStripePayment(paymentId);
+    
+    // For demo, we'll assume payment is successful
+    
+    // Generate a random ID tag for the transaction
+    const idTag = `PAYMENT_${paymentId.substring(0, 8)}`;
+    
+    // Get the WebSocketServer instance
+    const wsServer = WebSocketServer.getInstance();
+    
+    // Start the transaction remotely
+    const success = wsServer.startRemoteTransaction(
+      stationId,
+      connectorId,
+      idTag,
+      (responsePayload) => {
+        // This is the callback that will be called when we get a response
+        logger.info('RemoteStartTransaction response received', {
+          stationId,
+          connectorId,
+          status: responsePayload.status
+        });
+      }
+    );
+    
+    if (!success) {
+      return res.status(503).json({ 
+        error: 'Could not communicate with charging station', 
+        stationId 
+      });
+    }
+    
+    // Respond to client
+    res.json({
+      success: true,
+      message: 'Payment processed and charging initiated',
+      paymentId,
+      transactionRequest: {
+        stationId,
+        connectorId,
+        idTag
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error processing payment', { error: error.message });
+    res.status(500).json({ error: 'Payment processing failed' });
   }
 });
 

@@ -8,13 +8,21 @@
     "start": "node src/app.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "client": "node test-client.js"
+    "client": "node test-client.js",
+    "test:charging": "node src/scripts/test-charging.js",
+    "demo": "node src/scripts/full-charging-cycle.js",
+    "status": "node src/scripts/set-connector-status.js",
+    "start-tx": "node src/scripts/start-transaction.js",
+    "stop-tx": "node src/scripts/stop-transaction.js",
+    "meter": "node src/scripts/send-meter-value.js",
+    "boot": "node src/scripts/boot-notification.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "helmet": "^7.0.0",
+    "uuid": "^11.1.0",
     "winston": "^3.10.0",
     "ws": "^8.14.2"
   },

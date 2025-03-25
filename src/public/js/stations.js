@@ -218,7 +218,7 @@ function createStationCard(station) {
   
   if (station.connectors && Object.keys(station.connectors).length > 0) {
     Object.entries(station.connectors).forEach(([connectorId, data]) => {
-      const connectorEl = createConnectorItem(connectorId, data);
+      const connectorEl = createConnectorItem(connectorId, data, station.id);
       connectorList.appendChild(connectorEl);
     });
   } else {
@@ -248,46 +248,74 @@ function updateStationCard(station) {
   
   if (currentStatus !== station.status) {
     statusEl.textContent = station.status || 'Unknown';
-    
-    // Remove old status class
-    statusEl.classList.forEach(cls => {
-      if (cls.startsWith('status-')) {
-        statusEl.classList.remove(cls);
-      }
-    });
-    
+    statusEl.className = 'station-status'; // Reset classes
     statusEl.classList.add(`status-${station.status || 'Unknown'}`);
   }
   
-  // Update last heartbeat
-  const heartbeatTime = station.lastHeartbeat ? 
-    window.csmsUtils.formatDateTime(station.lastHeartbeat) : '--';
-  card.querySelector('.station-heartbeat').textContent = heartbeatTime;
+  // Update model/vendor if changed
+  if (station.chargePointModel) {
+    card.querySelector('.station-model').textContent = station.chargePointModel;
+  }
+  
+  if (station.chargePointVendor) {
+    card.querySelector('.station-vendor').textContent = station.chargePointVendor;
+  }
+  
+  // Update heartbeat time
+  if (station.lastHeartbeat) {
+    card.querySelector('.station-heartbeat').textContent = 
+      window.csmsUtils.formatDateTime(station.lastHeartbeat);
+  }
   
   // Update connectors
+  updateConnectorList(card, station);
+}
+
+/**
+ * Update the connector list in a station card
+ */
+function updateConnectorList(card, station) {
   const connectorList = card.querySelector('.connector-list');
   
-  // Clear existing connectors
-  connectorList.innerHTML = '';
-  
-  if (station.connectors && Object.keys(station.connectors).length > 0) {
+  // If no connectors yet, but now we have them
+  if (connectorList.querySelector('.no-connectors') && 
+      station.connectors && 
+      Object.keys(station.connectors).length > 0) {
+    // Clear and add connectors
+    connectorList.innerHTML = '';
     Object.entries(station.connectors).forEach(([connectorId, data]) => {
-      const connectorEl = createConnectorItem(connectorId, data);
+      const connectorEl = createConnectorItem(connectorId, data, station.id);
       connectorList.appendChild(connectorEl);
     });
-  } else {
-    // No connectors
-    connectorList.innerHTML = '<div class="no-connectors">No connectors available</div>';
+  } 
+  // If we already have connector elements, update them
+  else if (station.connectors && Object.keys(station.connectors).length > 0) {
+    Object.entries(station.connectors).forEach(([connectorId, data]) => {
+      let connectorEl = connectorList.querySelector(`.connector-item[data-connector-id="${connectorId}"]`);
+      
+      // If connector element doesn't exist, create it
+      if (!connectorEl) {
+        connectorEl = createConnectorItem(connectorId, data, station.id);
+        connectorList.appendChild(connectorEl);
+      } 
+      // Otherwise update existing connector
+      else {
+        updateConnectorItem(connectorEl, data, station.id);
+      }
+    });
   }
 }
 
 /**
  * Create a connector item element
  */
-function createConnectorItem(connectorId, data) {
-  // Clone template
+function createConnectorItem(connectorId, data, stationId) {
   const template = connectorItemTemplate.content.cloneNode(true);
   const connectorEl = template.querySelector('.connector-item');
+  
+  // Set connector data attributes
+  connectorEl.setAttribute('data-connector-id', connectorId);
+  connectorEl.setAttribute('data-station-id', stationId);
   
   // Set connector content
   connectorEl.querySelector('.connector-id').textContent = `Connector ${connectorId}`;
@@ -310,7 +338,330 @@ function createConnectorItem(connectorId, data) {
     connectorEl.querySelector('.connector-meter').textContent = 'No meter data';
   }
   
+  // If status is Preparing, show payment QR code
+  if (data.status === 'Preparing') {
+    // We call addPaymentQRCode after the element is fully created and in the DOM
+    setTimeout(() => {
+      addPaymentQRCode(connectorEl, stationId, connectorId);
+    }, 0);
+  }
+  
   return connectorEl;
+}
+
+/**
+ * Update an existing connector item element
+ */
+function updateConnectorItem(connectorEl, data, stationId) {
+  // Update status if available
+  if (data.status) {
+    const statusEl = connectorEl.querySelector('.connector-status');
+    const currentStatus = statusEl.textContent;
+    
+    if (currentStatus !== data.status) {
+      statusEl.textContent = data.status;
+      statusEl.className = 'connector-status'; // Reset classes
+      statusEl.classList.add(`status-${data.status}`);
+      
+      // Add payment button when status changes to Preparing
+      if (data.status === 'Preparing') {
+        // Remove any existing payment button
+        removePaymentButton(connectorEl);
+        
+        // Add payment button
+        const payButton = document.createElement('button');
+        payButton.className = 'payment-button';
+        payButton.textContent = 'Pay to Start';
+        payButton.addEventListener('click', () => {
+          openStationDetails(globalState.stations.find(s => s.id === stationId));
+          setTimeout(() => {
+            // Switch to payment tab
+            const paymentTab = document.querySelector('[data-tab="payment-tab"]');
+            if (paymentTab) {
+              paymentTab.click();
+            }
+            
+            // Set connector selection in payment tab
+            const connectorSelect = document.getElementById('payment-connector-select');
+            if (connectorSelect) {
+              connectorSelect.value = connectorEl.getAttribute('data-connector-id');
+              // Trigger change event
+              const event = new Event('change');
+              connectorSelect.dispatchEvent(event);
+            }
+          }, 100);
+        });
+        
+        connectorEl.appendChild(payButton);
+      } else {
+        // Remove payment button if status is not Preparing
+        removePaymentButton(connectorEl);
+      }
+    }
+  }
+  
+  // Update meter value and additional metrics if available
+  const meterEl = connectorEl.querySelector('.connector-meter');
+  
+  // Clear previous data
+  meterEl.innerHTML = '';
+  
+  if (data.meterValue) {
+    // Primary energy value
+    const value = data.meterValue.value || 0;
+    const unit = data.meterValue.unit || 'Wh';
+    
+    const valueEl = document.createElement('span');
+    valueEl.className = 'meter-value';
+    valueEl.textContent = value;
+    meterEl.appendChild(valueEl);
+    
+    meterEl.appendChild(document.createTextNode(' '));
+    
+    const unitEl = document.createElement('span');
+    unitEl.className = 'meter-unit';
+    unitEl.textContent = unit;
+    meterEl.appendChild(unitEl);
+    
+    // Add additional metrics in a secondary row if available
+    if (data.power || data.voltage || data.current) {
+      const metricsContainer = document.createElement('div');
+      metricsContainer.className = 'additional-metrics';
+      
+      const metrics = [];
+      
+      if (data.power) {
+        metrics.push(`${data.power.value}${data.power.unit}`);
+      }
+      
+      if (data.voltage) {
+        metrics.push(`${data.voltage.value}${data.voltage.unit}`);
+      }
+      
+      if (data.current) {
+        metrics.push(`${data.current.value}${data.current.unit}`);
+      }
+      
+      metricsContainer.textContent = metrics.join(' | ');
+      meterEl.appendChild(metricsContainer);
+    }
+  } else {
+    meterEl.textContent = 'No meter data';
+  }
+}
+
+/**
+ * Remove payment button from connector element
+ */
+function removePaymentButton(connectorEl) {
+  const paymentButton = connectorEl.querySelector('.payment-button');
+  if (paymentButton) {
+    paymentButton.remove();
+  }
+}
+
+/**
+ * Add payment QR code to a connector element
+ */
+function addPaymentQRCode(connector, stationId, connectorId) {
+    // No need to query for a child element, use the connector directly
+    const connectorElement = connector;
+    
+    // Remove any existing payment UI
+    const existingPayment = connector.querySelector('.payment-container');
+    if (existingPayment) {
+        existingPayment.remove();
+    }
+    
+    // Create a simple payment QR code using data URI
+    // This is a basic QR code pattern representing payment info
+    const qrCode = generateSimpleQRCode(`payment:${stationId}:${connectorId}`);
+    
+    // Create payment container
+    const paymentContainer = document.createElement('div');
+    paymentContainer.className = 'payment-container';
+    paymentContainer.innerHTML = `
+        <div class="payment-header">
+            <h3>Payment Required</h3>
+            <p>Complete payment to start</p>
+        </div>
+        <div class="payment-qr">
+            <img src="${qrCode}" alt="Payment QR Code" />
+        </div>
+        <div class="payment-info">
+            <button class="payment-button">Complete Payment</button>
+        </div>
+    `;
+    
+    connectorElement.appendChild(paymentContainer);
+    
+    // Add event listener to the payment button
+    const paymentButton = paymentContainer.querySelector('.payment-button');
+    paymentButton.addEventListener('click', () => completePayment(stationId, connectorId));
+}
+
+/**
+ * Generate a simple QR code pattern using data URI
+ * This is a very basic implementation - in production you'd use a proper QR library
+ */
+function generateSimpleQRCode(data) {
+    // Create a simple pattern based on the data string
+    // This is not an actual QR code, just a visual representation
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+    const ctx = canvas.getContext('2d');
+    
+    // Fill background
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, 100, 100);
+    
+    // Draw border
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, 100, 10);
+    ctx.fillRect(0, 0, 10, 100);
+    ctx.fillRect(90, 0, 10, 100);
+    ctx.fillRect(0, 90, 100, 10);
+    
+    // Draw finder patterns (the three large squares in corners)
+    drawFinderPattern(ctx, 15, 15);
+    drawFinderPattern(ctx, 15, 60);
+    drawFinderPattern(ctx, 60, 15);
+    
+    // Draw some data patterns based on the string
+    for (let i = 0; i < data.length; i++) {
+        const x = (i % 6) * 7 + 30;
+        const y = Math.floor(i / 6) * 7 + 30;
+        const charCode = data.charCodeAt(i);
+        
+        if (charCode % 2) {
+            ctx.fillRect(x, y, 5, 5);
+        }
+    }
+    
+    // Return as data URI
+    return canvas.toDataURL('image/png');
+}
+
+/**
+ * Draw QR code finder pattern
+ */
+function drawFinderPattern(ctx, x, y) {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(x, y, 20, 20);
+    
+    ctx.fillStyle = 'white';
+    ctx.fillRect(x + 4, y + 4, 12, 12);
+    
+    ctx.fillStyle = 'black';
+    ctx.fillRect(x + 7, y + 7, 6, 6);
+}
+
+/**
+ * Remove payment QR code from connector element
+ */
+function removePaymentQRCode(connectorEl) {
+  const paymentContainer = connectorEl.querySelector('.payment-container');
+  if (paymentContainer) {
+    paymentContainer.remove();
+  }
+}
+
+/**
+ * Handle payment completion
+ */
+function completePayment(stationId, connectorId) {
+    // Find the connector element with the correct data attributes
+    const connectorElement = document.querySelector(`.connector-item[data-connector-id="${connectorId}"][data-station-id="${stationId}"]`);
+    
+    if (!connectorElement) {
+        console.error(`Connector element not found for station ${stationId}, connector ${connectorId}`);
+        return;
+    }
+    
+    const paymentContainer = connectorElement.querySelector('.payment-container');
+    
+    if (paymentContainer) {
+        paymentContainer.innerHTML = `
+            <div class="payment-header">
+                <h3>Processing</h3>
+                <p>Please wait...</p>
+            </div>
+            <div class="payment-loading">
+                <div class="spinner"></div>
+            </div>
+        `;
+    }
+    
+    // Generate a fake payment ID for demo
+    const paymentId = 'pm_' + Math.random().toString(36).substring(2, 10);
+    
+    // Make API request to complete payment
+    fetch('/api/payment/complete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            stationId: stationId,
+            connectorId: connectorId,
+            paymentId: paymentId
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Payment processing failed');
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            // Payment succeeded
+            if (paymentContainer) {
+                paymentContainer.innerHTML = `
+                    <div class="payment-header">
+                        <h3>Payment Successful</h3>
+                        <p>Starting charging...</p>
+                    </div>
+                    <div class="payment-success">
+                        <svg viewBox="0 0 24 24" width="30" height="30">
+                            <path fill="green" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"></path>
+                        </svg>
+                    </div>
+                `;
+                
+                // Remove payment container after 2 seconds
+                setTimeout(() => {
+                    if (paymentContainer.parentElement) {
+                        paymentContainer.remove();
+                    }
+                }, 2000);
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Payment error:', error);
+        if (paymentContainer) {
+            paymentContainer.innerHTML = `
+                <div class="payment-header">
+                    <h3>Payment Failed</h3>
+                    <p>Try again</p>
+                </div>
+                <div class="payment-error">
+                    <svg viewBox="0 0 24 24" width="30" height="30">
+                        <path fill="red" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>
+                    </svg>
+                </div>
+                <button class="payment-button">Try Again</button>
+            `;
+            
+            // Add event listener to the try again button
+            const retryButton = paymentContainer.querySelector('.payment-button');
+            if (retryButton) {
+                retryButton.addEventListener('click', () => completePayment(stationId, connectorId));
+            }
+        }
+    });
 }
 
 /**
@@ -331,6 +682,9 @@ function openStationDetails(station) {
   
   // Populate station info
   populateStationInfo(station);
+  
+  // Populate payment tab
+  updatePaymentTab(station);
   
   // Show the modal
   stationModal.style.display = 'block';
@@ -353,6 +707,11 @@ function updateStationModal(station, globalState) {
     );
     
     renderStationTransactions(stationTransactions);
+  }
+  
+  // Update payment tab if it's active
+  if (document.getElementById('payment-tab').classList.contains('active')) {
+    updatePaymentTab(station);
   }
 }
 
@@ -487,6 +846,189 @@ function renderStationTransactions(transactions) {
     
     tbody.appendChild(row);
   });
+}
+
+/**
+ * Update the payment tab with station connector data
+ */
+function updatePaymentTab(station) {
+  const paymentTab = document.getElementById('payment-tab');
+  
+  // Clear existing content
+  paymentTab.innerHTML = '';
+  
+  // Check if station has any connectors in Preparing state
+  const preparingConnectors = [];
+  if (station.connectors) {
+    Object.entries(station.connectors).forEach(([connectorId, data]) => {
+      if (data.status === 'Preparing') {
+        preparingConnectors.push({ id: connectorId, data });
+      }
+    });
+  }
+  
+  if (preparingConnectors.length === 0) {
+    // No connectors in Preparing state
+    paymentTab.innerHTML = `
+      <div class="payment-status">
+        <p>No connectors ready for payment</p>
+        <p>Connect a vehicle to a connector to initiate payment.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  // Create payment form
+  const paymentForm = document.createElement('div');
+  paymentForm.className = 'payment-form';
+  
+  // Connector selection
+  const connectorSelect = document.createElement('select');
+  connectorSelect.id = 'payment-connector-select';
+  connectorSelect.className = 'payment-connector-select';
+  
+  preparingConnectors.forEach(connector => {
+    const option = document.createElement('option');
+    option.value = connector.id;
+    option.textContent = `Connector ${connector.id}`;
+    connectorSelect.appendChild(option);
+  });
+  
+  // Listen for connector selection changes
+  connectorSelect.addEventListener('change', () => {
+    const selectedConnectorId = connectorSelect.value;
+    updatePaymentQRCode(station.id, selectedConnectorId);
+  });
+  
+  // Payment header
+  const paymentHeader = document.createElement('div');
+  paymentHeader.className = 'payment-header-large';
+  paymentHeader.innerHTML = `
+    <h3>Payment Required</h3>
+    <p>Select connector and complete payment to start charging</p>
+    <div class="connector-selection">
+      <label for="payment-connector-select">Connector:</label>
+    </div>
+  `;
+  paymentHeader.querySelector('.connector-selection').appendChild(connectorSelect);
+  
+  // Payment QR container
+  const qrContainer = document.createElement('div');
+  qrContainer.id = 'payment-qr-container';
+  qrContainer.className = 'payment-qr-large';
+  
+  // Payment button container
+  const buttonContainer = document.createElement('div');
+  buttonContainer.className = 'payment-actions';
+  
+  const paymentButton = document.createElement('button');
+  paymentButton.className = 'payment-button-large';
+  paymentButton.textContent = 'Complete Payment';
+  paymentButton.addEventListener('click', () => {
+    completePayment(station.id, connectorSelect.value);
+  });
+  
+  buttonContainer.appendChild(paymentButton);
+  
+  // Assemble payment form
+  paymentForm.appendChild(paymentHeader);
+  paymentForm.appendChild(qrContainer);
+  paymentForm.appendChild(buttonContainer);
+  
+  paymentTab.appendChild(paymentForm);
+  
+  // Generate QR code for the first connector
+  updatePaymentQRCode(station.id, preparingConnectors[0].id);
+}
+
+/**
+ * Update payment QR code in the modal
+ */
+function updatePaymentQRCode(stationId, connectorId) {
+  const qrContainer = document.getElementById('payment-qr-container');
+  if (!qrContainer) return;
+  
+  // Clear existing content
+  qrContainer.innerHTML = '';
+  
+  // Create Stripe test payment URL
+  const stripeSessionData = {
+    stationId,
+    connectorId,
+    timestamp: Date.now()
+  };
+  
+  // In a real implementation, you'd create a Stripe Checkout session and get the URL
+  // For now, we'll create a dummy URL with the session data encoded
+  const stripeUrl = `https://checkout.stripe.com/pay/cs_test_${btoa(JSON.stringify(stripeSessionData)).replace(/=/g, '')}`;
+  
+  // Create QR code element
+  const qrCodeElement = document.createElement('div');
+  qrCodeElement.id = 'qrcode';
+  qrContainer.appendChild(qrCodeElement);
+  
+  // Add loading indicator
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'qr-loading';
+  loadingEl.innerHTML = '<div class="spinner"></div><p>Generating QR code...</p>';
+  qrContainer.appendChild(loadingEl);
+  
+  // Add URL display
+  const urlDisplay = document.createElement('div');
+  urlDisplay.className = 'payment-url';
+  urlDisplay.innerHTML = `
+    <p>Or use this payment link:</p>
+    <a href="${stripeUrl}" target="_blank">${stripeUrl.substring(0, 40)}...</a>
+  `;
+  qrContainer.appendChild(urlDisplay);
+  
+  // Try to load QRCode.js
+  try {
+    // Use our built-in QR code generator if external library fails
+    const qrImage = generateSimplePaymentQRCode(stripeUrl);
+    loadingEl.style.display = 'none';
+    qrCodeElement.innerHTML = `<img src="${qrImage}" alt="Payment QR Code" width="200" height="200">`;
+  } catch (error) {
+    console.error('Error generating QR code:', error);
+    loadingEl.innerHTML = '<p>Could not generate QR code. Please use the payment link below.</p>';
+  }
+}
+
+/**
+ * Generate a payment QR code for Stripe checkout
+ * This is a fallback method when the external QR code library fails to load
+ */
+function generateSimplePaymentQRCode(url) {
+  // Create a canvas element
+  const canvas = document.createElement('canvas');
+  canvas.width = 200;
+  canvas.height = 200;
+  const ctx = canvas.getContext('2d');
+  
+  // Fill background
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, 200, 200);
+  
+  // Draw a border
+  ctx.strokeStyle = '#3498db';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(10, 10, 180, 180);
+  
+  // Draw a Stripe-like logo in the center
+  ctx.fillStyle = '#3498db';
+  ctx.fillRect(60, 85, 80, 30);
+  
+  // Draw text labels
+  ctx.fillStyle = 'black';
+  ctx.font = '16px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Stripe Payment', 100, 60);
+  ctx.font = '14px Arial';
+  ctx.fillText(stationsState.selectedStation?.id || 'Station', 100, 140);
+  ctx.fillText(`Connector ${url.split('connectorId')[1].charAt(3)}`, 100, 160);
+  
+  // Return the data URL
+  return canvas.toDataURL('image/png');
 }
 
 // Export functions for global use

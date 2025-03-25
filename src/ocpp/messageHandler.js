@@ -196,6 +196,60 @@ function updateChargePointData(chargePointId, action, payload) {
         stationService.handleStatusNotification(chargePointId, payload);
         break;
         
+      case 'MeterValues':
+        // Process each meter value in the MeterValues message
+        if (payload.meterValue && Array.isArray(payload.meterValue)) {
+          // Find energy readings in the meter values
+          for (const meterValue of payload.meterValue) {
+            if (meterValue.sampledValue && Array.isArray(meterValue.sampledValue)) {
+              let energyReading = null;
+              const additionalReadings = {};
+              
+              // First pass: collect all measurements
+              for (const sample of meterValue.sampledValue) {
+                const measurand = sample.measurand || 'Energy.Active.Import.Register';
+                const value = parseFloat(sample.value);
+                
+                // Collect different types of readings
+                if (measurand === 'Energy.Active.Import.Register' || 
+                    measurand === 'Energy.Active.Import.Interval') {
+                  energyReading = {
+                    value: value,
+                    unit: sample.unit || 'Wh',
+                    timestamp: meterValue.timestamp
+                  };
+                } else if (measurand === 'Power.Active.Import') {
+                  additionalReadings.power = {
+                    value: value,
+                    unit: sample.unit || 'W'
+                  };
+                } else if (measurand === 'Voltage') {
+                  additionalReadings.voltage = {
+                    value: value,
+                    unit: sample.unit || 'V'
+                  };
+                } else if (measurand === 'Current.Import') {
+                  additionalReadings.current = {
+                    value: value,
+                    unit: sample.unit || 'A'
+                  };
+                }
+              }
+              
+              // Then update with all collected readings
+              if (energyReading) {
+                stationService.updateChargePointMeterValue(
+                  chargePointId,
+                  payload.connectorId,
+                  energyReading,
+                  additionalReadings
+                );
+              }
+            }
+          }
+        }
+        break;
+        
       default:
         // For other actions, we might not need special handling
         break;

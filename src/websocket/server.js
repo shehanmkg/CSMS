@@ -3,6 +3,9 @@ const url = require('url');
 const { logger } = require('../utils/logger');
 const { processOcppMessage } = require('../ocpp/messageHandler');
 
+// Singleton instance
+let instance = null;
+
 class WebSocketServer {
     /**
      * Create a WebSocket server for OCPP communication
@@ -10,7 +13,15 @@ class WebSocketServer {
      * @param {number|http.Server} serverOrPort - HTTP server instance or port number
      */
     constructor(serverOrPort = 9220) {
+        // If singleton exists, return it
+        if (instance) {
+            return instance;
+        }
+        
+        instance = this;
+        
         this.connections = new Map();
+        this.pendingRequests = new Map();
         
         if (typeof serverOrPort === 'number') {
             // Standalone mode - create WebSocket server on a specific port
@@ -23,6 +34,17 @@ class WebSocketServer {
         }
         
         this.setupServer();
+    }
+
+    /**
+     * Get the singleton instance
+     * @returns {WebSocketServer} The singleton instance
+     */
+    static getInstance() {
+        if (!instance) {
+            return new WebSocketServer();
+        }
+        return instance;
     }
 
     setupServer() {
@@ -93,6 +115,18 @@ class WebSocketServer {
             // Handle incoming messages
             ws.on('message', (message) => {
                 try {
+                    const parsedMessage = JSON.parse(message.toString());
+                    
+                    // Check for CallResult (response to our requests)
+                    if (parsedMessage[0] === 3) { // CALLRESULT
+                        const messageId = parsedMessage[1];
+                        const payload = parsedMessage[2];
+                        
+                        // Handle pending request callbacks
+                        this.handleCallResult(messageId, payload);
+                    }
+                    
+                    // Process all OCPP messages normally
                     processOcppMessage(ws, message.toString());
                 } catch (error) {
                     logger.error(`Error handling message from ${chargePointId}:`, error);
@@ -117,6 +151,93 @@ class WebSocketServer {
     }
 
     /**
+     * Handle OCPP CallResult responses
+     * @param {string} messageId - The message ID of the original request
+     * @param {object} payload - The response payload
+     */
+    handleCallResult(messageId, payload) {
+        const pendingRequest = this.pendingRequests.get(messageId);
+        if (pendingRequest) {
+            logger.debug(`Received response for request ${messageId}`, {
+                action: pendingRequest.action,
+                response: payload
+            });
+            
+            // Call the callback with the payload
+            if (pendingRequest.callback) {
+                pendingRequest.callback(payload);
+            }
+            
+            // Remove from pending requests
+            this.pendingRequests.delete(messageId);
+        }
+    }
+
+    /**
+     * Send an OCPP request to a charge point
+     * @param {string} chargePointId - The charge point ID
+     * @param {string} action - The OCPP action
+     * @param {object} payload - The request payload
+     * @param {function} callback - Callback function for the response
+     * @returns {boolean} Success status
+     */
+    sendRequest(chargePointId, action, payload, callback) {
+        const ws = this.connections.get(chargePointId);
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            logger.error(`Cannot send request - charge point ${chargePointId} not connected`);
+            return false;
+        }
+        
+        // Generate message ID
+        const messageId = Date.now().toString();
+        
+        // Create OCPP CALL message [2, messageId, action, payload]
+        const message = [2, messageId, action, payload];
+        
+        try {
+            // Store callback for handling response
+            this.pendingRequests.set(messageId, {
+                action,
+                timestamp: Date.now(),
+                callback
+            });
+            
+            // Send the message
+            ws.send(JSON.stringify(message));
+            
+            logger.info(`Sent ${action} request to ${chargePointId}`, {
+                messageId,
+                payload
+            });
+            
+            return true;
+        } catch (error) {
+            logger.error(`Error sending ${action} to ${chargePointId}`, {
+                error: error.message
+            });
+            this.pendingRequests.delete(messageId);
+            return false;
+        }
+    }
+
+    /**
+     * Send a RemoteStartTransaction request to a charge point
+     * @param {string} chargePointId - The charge point ID
+     * @param {number} connectorId - The connector ID
+     * @param {string} idTag - The ID tag for authorization
+     * @param {function} callback - Callback function for the response
+     * @returns {boolean} Success status
+     */
+    startRemoteTransaction(chargePointId, connectorId, idTag, callback) {
+        const payload = {
+            connectorId: parseInt(connectorId, 10),
+            idTag
+        };
+        
+        return this.sendRequest(chargePointId, 'RemoteStartTransaction', payload, callback);
+    }
+
+    /**
      * Get a list of all connected charge points
      * @returns {Array} Array of charge point IDs
      */
@@ -129,9 +250,10 @@ class WebSocketServer {
      * @param {string} chargePointId 
      * @returns {WebSocket|undefined}
      */
-    getConnectionByChargePointId(chargePointId) {
+    getConnection(chargePointId) {
         return this.connections.get(chargePointId);
     }
 }
 
-module.exports = { WebSocketServer }; 
+// Export the WebSocketServer class
+module.exports = WebSocketServer; 

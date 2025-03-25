@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CSMS Dashboard</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://api.qrserver.com; connect-src 'self';">
   <link rel="stylesheet" href="css/styles.css">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
@@ -194,6 +195,7 @@
       <div class="modal-tabs">
         <button class="tab-btn active" data-tab="info-tab">Information</button>
         <button class="tab-btn" data-tab="transactions-tab">Transactions</button>
+        <button class="tab-btn" data-tab="payment-tab">Payment</button>
         <button class="tab-btn" data-tab="logs-tab">Logs</button>
       </div>
       
@@ -218,6 +220,10 @@
             <!-- Transaction rows will be rendered here -->
           </tbody>
         </table>
+      </div>
+      
+      <div id="payment-tab" class="tab-content">
+        <!-- Payment content will be populated dynamically -->
       </div>
       
       <div id="logs-tab" class="tab-content">
