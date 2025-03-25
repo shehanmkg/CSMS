@@ -1,28 +1,58 @@
 {
-  "name": "csms-poc",
-  "version": "1.0.0",
-  "description": "Charging Station Management System POC with OCPP 1.6J support",
+  "name": "csms-ocpp-server",
+  "version": "0.1.0",
+  "description": "Charging Station Management System with OCPP 1.6J support",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "test": "jest --coverage",
-    "lint": "eslint src/**/*.js",
-    "format": "prettier --write 'src/**/*.js'"
+    "start": "node src/app.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "client": "node test-client.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "ws": "^8.16.0",
-    "winston": "^3.11.0",
-    "dotenv": "^16.4.1",
     "cors": "^2.8.5",
-    "helmet": "^7.1.0"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.0.0",
+    "winston": "^3.10.0",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "nodemon": "^3.0.3",
-    "eslint": "^8.56.0",
-    "prettier": "^3.2.4",
-    "supertest": "^6.3.4"
-  }
-} 
+    "nodemon": "^3.0.1"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverage": true,
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/ocpp/**/*.js",
+      "src/websocket/**/*.js",
+      "!src/tests/**"
+    ]
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shehanmkg/CSMS.git"
+  },
+  "keywords": [
+    "OCPP",
+    "EV",
+    "charging",
+    "station",
+    "management"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/shehanmkg/CSMS/issues"
+  },
+  "homepage": "https://github.com/shehanmkg/CSMS#readme"
+}

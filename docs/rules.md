@@ -82,6 +82,58 @@ Always ensure logging is enabled for:
 
 The logs should be saved for analysis and debugging purposes.
 
+## MicroOCPP Simulator Integration Guidelines
+
+This document outlines the verified connection parameters and guidelines for using the MicroOCPP simulator with the CSMS WebSocket server.
+
+### Connection Configuration
+
+For successful connection between the MicroOCPP simulator and the CSMS WebSocket server, use the following verified configuration:
+
+#### Backend URL
+- **Format**: `ws://192.168.4.43:9220/CP001`
+- **Notes**: Use your host machine's actual IP address (run `ifconfig` or `ipconfig` to find it)
+- **Important**: The chargeBoxId in the URL path must match the Chargebox ID configuration
+
+#### Chargebox ID
+- **Value**: `CP001` (or other unique identifier for testing stations)
+- **Requirements**: Must match the ID in the Backend URL path
+
+#### Protocol
+- **Value**: `ocpp1.6`
+- **Requirements**: The server only accepts OCPP 1.6
+
+#### Connection Settings
+- **Ping Interval**: `5` (seconds)
+- **Reconnect Interval**: `10` (seconds)
+
+### Troubleshooting Common Issues
+
+If connection issues occur, verify the following:
+
+1. **Server is Running**: Ensure the CSMS WebSocket server is running on port 9220
+2. **Correct IP Address**: Use the host machine's actual IP address, not localhost or host.docker.internal
+3. **URL Format**: Verify the URL format includes the protocol, IP, port, and chargeBoxId
+4. **Network Access**: Ensure the Docker container can access the host on port 9220
+5. **Consistent IDs**: Verify the chargeBoxId in the URL matches the configured Chargebox ID
+
+### OCPP Operations
+
+The current implementation supports the following OCPP operations:
+
+- **BootNotification**: Fully supported with proper response
+- **Heartbeat**: Fully supported with timestamp synchronization
+- **Other Messages**: Basic message routing implemented, detailed handling coming in next sprint
+
+### Development Workflow
+
+When developing and testing with the simulator:
+
+1. Start the CSMS server first
+2. Configure the simulator with the settings above
+3. Connect using the simulator dashboard
+4. Monitor logs in both the server and simulator for detailed connection information
+
 ## MicroOCPP Simulator Integration Rules
 
 ### 1. Simulator Usage Guidelines

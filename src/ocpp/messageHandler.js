@@ -1,139 +1,217 @@
-const { ocppLogger } = require('../utils/logger');
+const { logger } = require('../utils/logger');
+const { getHandlerForAction } = require('./handlers');
+const stationService = require('../services/stationService');
 
-// OCPP Message Types
-const CALL = 2;
-const CALLRESULT = 3;
-const CALLERROR = 4;
-
-// OCPP Message Actions
-const ACTIONS = {
-  BOOT_NOTIFICATION: 'BootNotification',
-  HEARTBEAT: 'Heartbeat',
-  STATUS_NOTIFICATION: 'StatusNotification',
-  AUTHORIZE: 'Authorize',
-  START_TRANSACTION: 'StartTransaction',
-  STOP_TRANSACTION: 'StopTransaction',
-  METER_VALUES: 'MeterValues'
+// Message types as per OCPP spec
+const MESSAGE_TYPE = {
+  CALL: 2,
+  CALLRESULT: 3,
+  CALLERROR: 4
 };
 
-async function handleOCPPMessage(ws, message) {
+/**
+ * Process an OCPP message
+ * 
+ * @param {WebSocket} ws - The WebSocket connection
+ * @param {string} message - The raw message string
+ * @returns {Promise<void>}
+ */
+async function processOcppMessage(ws, message) {
   try {
     const parsedMessage = JSON.parse(message);
     
     // Log incoming message
-    ocppLogger.debug('Received OCPP message:', {
+    logger.debug('Received OCPP message:', {
       chargePointId: ws.chargePointId,
       message: parsedMessage
     });
-
-    // Validate message structure
+    
+    // Validate the message format
     if (!Array.isArray(parsedMessage) || parsedMessage.length < 3) {
       throw new Error('Invalid message format');
     }
-
-    const [messageType, messageId, action, payload] = parsedMessage;
-
-    // Basic message type handling
+    
+    // Extract the message type and handle accordingly
+    const messageType = parsedMessage[0];
+    
     switch (messageType) {
-      case CALL:
-        await handleCall(ws, messageId, action, payload);
+      case MESSAGE_TYPE.CALL:
+        // Handle Call message [2, messageId, action, payload]
+        if (parsedMessage.length < 4) throw new Error('Invalid Call message format');
+        await handleCall(ws, parsedMessage[1], parsedMessage[2], parsedMessage[3]);
         break;
-      case CALLRESULT:
-        await handleCallResult(ws, messageId, payload);
+        
+      case MESSAGE_TYPE.CALLRESULT:
+        // Handle CallResult message [3, messageId, payload]
+        await handleCallResult(ws, parsedMessage[1], parsedMessage[2]);
         break;
-      case CALLERROR:
-        await handleCallError(ws, messageId, payload);
+        
+      case MESSAGE_TYPE.CALLERROR:
+        // Handle CallError message [4, messageId, errorCode, errorDescription, errorDetails]
+        await handleCallError(
+          ws, 
+          parsedMessage[1], 
+          parsedMessage[2], 
+          parsedMessage[3], 
+          parsedMessage[4] || {}
+        );
         break;
+        
       default:
-        throw new Error('Invalid message type');
+        throw new Error(`Unsupported message type: ${messageType}`);
     }
-
   } catch (error) {
-    ocppLogger.error('Error processing message:', {
+    logger.error('Error processing OCPP message:', {
       error: error.message,
-      stack: error.stack,
+      chargePointId: ws.chargePointId || 'unknown',
+      rawMessage: message
+    });
+  }
+}
+
+/**
+ * Process an OCPP Call message for a specific action
+ * 
+ * @param {string} action - The OCPP action
+ * @param {object} payload - The message payload
+ * @param {string} chargePointId - The charge point ID 
+ * @returns {Promise<object>} The response payload
+ */
+async function processOcppCall(action, payload, chargePointId) {
+  const handler = getHandlerForAction(action);
+  
+  if (!handler) {
+    throw new Error(`No handler found for action: ${action}`);
+  }
+  
+  return handler(payload, chargePointId);
+}
+
+/**
+ * Handle an OCPP Call message
+ * 
+ * @param {WebSocket} ws - The WebSocket connection
+ * @param {string} messageId - The message ID
+ * @param {string} action - The OCPP action
+ * @param {object} payload - The message payload
+ * @returns {Promise<void>}
+ */
+async function handleCall(ws, messageId, action, payload) {
+  logger.info(`Handling ${action} request`, {
+    chargePointId: ws.chargePointId,
+    messageId
+  });
+
+  try {
+    // Process the message using the appropriate handler
+    const response = await processOcppCall(action, payload, ws.chargePointId);
+    
+    // Update charge point data based on the action
+    updateChargePointData(ws.chargePointId, action, payload);
+    
+    // Send the response
+    const callResult = [MESSAGE_TYPE.CALLRESULT, messageId, response];
+    ws.send(JSON.stringify(callResult));
+    
+    logger.debug(`Sent ${action} response`, {
+      chargePointId: ws.chargePointId,
+      messageId,
+      response
+    });
+  } catch (error) {
+    logger.error(`Error handling ${action}:`, {
+      error: error.message,
       chargePointId: ws.chargePointId
     });
     
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify([CALLERROR, messageId || "", "GenericError", "Internal error", {}]));
-    }
+    // Send error response
+    const errorResponse = [
+      MESSAGE_TYPE.CALLERROR, 
+      messageId, 
+      "InternalError", 
+      error.message || "Unknown error", 
+      {}
+    ];
+    ws.send(JSON.stringify(errorResponse));
   }
 }
 
-async function handleCall(ws, messageId, action, payload) {
-  ocppLogger.debug(`Handling ${action} request`, {
-    chargePointId: ws.chargePointId,
-    messageId,
-    payload
-  });
-
-  let response;
-  
-  switch (action) {
-    case ACTIONS.BOOT_NOTIFICATION:
-      response = {
-        status: "Accepted",
-        currentTime: new Date().toISOString(),
-        interval: 300
-      };
-      ocppLogger.info(`Charge Point ${ws.chargePointId} booted successfully`, {
-        payload,
-        response
-      });
-      break;
-
-    case ACTIONS.HEARTBEAT:
-      response = {
-        currentTime: new Date().toISOString()
-      };
-      ocppLogger.debug(`Heartbeat received from ${ws.chargePointId}`);
-      break;
-
-    case ACTIONS.STATUS_NOTIFICATION:
-      response = {};
-      ocppLogger.info(`Status update from ${ws.chargePointId}:`, {
-        status: payload.status,
-        errorCode: payload.errorCode
-      });
-      break;
-
-    default:
-      ocppLogger.warn(`Unhandled action ${action} from ${ws.chargePointId}`);
-      response = {};
-  }
-
-  // Send response
-  const callResult = [CALLRESULT, messageId, response];
-  ws.send(JSON.stringify(callResult));
-}
-
+/**
+ * Handle an OCPP CallResult message
+ * 
+ * @param {WebSocket} ws - The WebSocket connection
+ * @param {string} messageId - The message ID
+ * @param {object} payload - The message payload
+ * @returns {Promise<void>}
+ */
 async function handleCallResult(ws, messageId, payload) {
-  ocppLogger.debug(`Received CallResult for message ${messageId}`, {
+  logger.info(`Received CallResult for message ${messageId}`, {
     chargePointId: ws.chargePointId,
     payload
   });
+  // In the current implementation, the server doesn't send Call messages to clients,
+  // so we don't expect to receive CallResults.
+  // This would be implemented when we add server-initiated operations.
 }
 
-async function handleCallError(ws, messageId, payload) {
-  ocppLogger.error(`Received CallError for message ${messageId}`, {
+/**
+ * Handle an OCPP CallError message
+ * 
+ * @param {WebSocket} ws - The WebSocket connection
+ * @param {string} messageId - The message ID
+ * @param {string} errorCode - The error code
+ * @param {string} errorDescription - The error description
+ * @param {object} errorDetails - Additional error details
+ * @returns {Promise<void>}
+ */
+async function handleCallError(ws, messageId, errorCode, errorDescription, errorDetails) {
+  logger.error(`Received CallError for message ${messageId}`, {
     chargePointId: ws.chargePointId,
-    payload
+    errorCode,
+    errorDescription,
+    errorDetails
   });
+  // Similar to CallResult, we don't expect to receive these in the current implementation
 }
 
-// Function to check connection status
-function getConnectionStatus(ws) {
-  return {
-    isConnected: ws.readyState === ws.OPEN,
-    lastPingTime: ws.lastPingTime,
-    chargePointId: ws.chargePointId,
-    uptime: ws.lastPingTime ? Date.now() - ws.lastPingTime : 0
-  };
+/**
+ * Update stored charge point data based on action and payload
+ * 
+ * @param {string} chargePointId - The charge point ID
+ * @param {string} action - The OCPP action
+ * @param {object} payload - The message payload
+ */
+function updateChargePointData(chargePointId, action, payload) {
+  try {
+    switch (action) {
+      case 'BootNotification':
+        stationService.handleBootNotification(chargePointId, payload);
+        break;
+        
+      case 'Heartbeat':
+        stationService.handleHeartbeat(chargePointId);
+        break;
+        
+      case 'StatusNotification':
+        stationService.handleStatusNotification(chargePointId, payload);
+        break;
+        
+      default:
+        // For other actions, we might not need special handling
+        break;
+    }
+  } catch (error) {
+    logger.error(`Error updating charge point data for ${action}:`, {
+      error: error.message,
+      chargePointId
+    });
+  }
 }
 
-module.exports = { 
-  handleOCPPMessage,
-  getConnectionStatus,
-  ACTIONS
+module.exports = {
+  processOcppMessage,
+  MESSAGE_TYPE,
+  // Exported for testing
+  processOcppCall,
+  updateChargePointData
 }; 
