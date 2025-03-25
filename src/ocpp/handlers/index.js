@@ -6,6 +6,9 @@
 const heartbeatHandler = require('./heartbeat');
 const statusNotificationHandler = require('./statusNotification');
 const bootNotificationHandler = require('./bootNotification');
+const authorizeHandler = require('./authorize');
+const startTransactionHandler = require('./startTransaction');
+const stopTransactionHandler = require('./stopTransaction');
 const { logger } = require('../../utils/logger');
 
 // OCPP action names
@@ -13,8 +16,8 @@ const ACTIONS = {
   BOOT_NOTIFICATION: 'BootNotification',
   HEARTBEAT: 'Heartbeat',
   STATUS_NOTIFICATION: 'StatusNotification',
-  // Other OCPP actions to be implemented later
   AUTHORIZE: 'Authorize',
+  // Other OCPP actions to be implemented later
   START_TRANSACTION: 'StartTransaction',
   STOP_TRANSACTION: 'StopTransaction',
   METER_VALUES: 'MeterValues',
@@ -26,10 +29,10 @@ const actionHandlers = new Map([
   [ACTIONS.BOOT_NOTIFICATION, bootNotificationHandler],
   [ACTIONS.HEARTBEAT, heartbeatHandler],
   [ACTIONS.STATUS_NOTIFICATION, statusNotificationHandler],
+  [ACTIONS.AUTHORIZE, authorizeHandler],
+  [ACTIONS.START_TRANSACTION, startTransactionHandler],
+  [ACTIONS.STOP_TRANSACTION, stopTransactionHandler],
   // Add placeholder handlers for unimplemented actions
-  [ACTIONS.AUTHORIZE, notImplementedHandler('Authorize')],
-  [ACTIONS.START_TRANSACTION, notImplementedHandler('StartTransaction')],
-  [ACTIONS.STOP_TRANSACTION, notImplementedHandler('StopTransaction')],
   [ACTIONS.METER_VALUES, notImplementedHandler('MeterValues')],
   [ACTIONS.DATA_TRANSFER, notImplementedHandler('DataTransfer')]
 ]);

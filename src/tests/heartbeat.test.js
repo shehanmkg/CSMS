@@ -3,7 +3,7 @@
  * Tests the OCPP Heartbeat message handler
  */
 
-const { handleHeartbeat } = require('../ocpp/handlers/heartbeat');
+const handleHeartbeat = require('../ocpp/handlers/heartbeat');
 const { ACTIONS } = require('../ocpp/schemas');
 
 // Mock the logger to prevent console output during tests

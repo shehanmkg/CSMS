@@ -16,12 +16,15 @@
 - [x] Create station service for data management
 - [x] Successfully tested with MicroOCPP simulator
 - [x] Documentation and guides
+- [x] Implement Authorize operation handler
+- [x] Implement StartTransaction operation handler
+- [x] Create transaction service for tracking charging sessions
+- [x] Implement StopTransaction operation handler
 
 ### Current Focus
 
-- [ ] Implement Authorize operation handler
-- [ ] Implement StartTransaction operation handler
-- [ ] Implement StopTransaction operation handler
+- [ ] Add MeterValues operation handler
+- [ ] Implement transaction monitoring dashboard
 
 ### Up Next
 

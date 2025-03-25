@@ -3,7 +3,7 @@
  * Tests the OCPP StatusNotification message handler
  */
 
-const { handleStatusNotification } = require('../ocpp/handlers/statusNotification');
+const handleStatusNotification = require('../ocpp/handlers/statusNotification');
 const { ACTIONS } = require('../ocpp/schemas');
 
 // Mock the logger to prevent console output during tests
