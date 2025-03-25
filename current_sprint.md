@@ -20,11 +20,12 @@
 - [x] Implement StartTransaction operation handler
 - [x] Create transaction service for tracking charging sessions
 - [x] Implement StopTransaction operation handler
+- [x] Implement MeterValues operation handler
 
 ### Current Focus
 
-- [ ] Add MeterValues operation handler
 - [ ] Implement transaction monitoring dashboard
+- [ ] Enhanced station monitoring with meter values and transaction history
 
 ### Up Next
 

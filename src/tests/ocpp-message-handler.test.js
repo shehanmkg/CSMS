@@ -511,4 +511,174 @@ describe('OCPP Message Handler Integration Tests', () => {
     expect(response[2]).toBe('InternalError');
     expect(response[3]).toContain('required field');
   });
+
+  test('should handle MeterValues during transaction', async () => {
+    // Initialize with a transaction first 
+    // (reusing previous test steps to create a transaction)
+    mockWs = {
+      chargePointId: 'CP001',
+      send: jest.fn(),
+      readyState: 1, 
+      OPEN: 1
+    };
+    
+    // Initialize with a BootNotification and start a transaction
+    const bootMessage = JSON.stringify([
+      MESSAGE_TYPE.CALL,
+      'boot-message-id',
+      ACTIONS.BOOT_NOTIFICATION,
+      {
+        chargePointVendor: 'Test Vendor',
+        chargePointModel: 'Test Model'
+      }
+    ]);
+    
+    await processOcppMessage(mockWs, bootMessage);
+    
+    const startTxMessage = JSON.stringify([
+      MESSAGE_TYPE.CALL,
+      'start-tx-message-id',
+      ACTIONS.START_TRANSACTION,
+      {
+        connectorId: 1,
+        idTag: 'valid-tag-123',
+        meterStart: 1000,
+        timestamp: '2023-01-01T12:00:00.000Z'
+      }
+    ]);
+    
+    await processOcppMessage(mockWs, startTxMessage);
+    const startResponse = JSON.parse(mockWs.send.mock.calls[1][0]);
+    const transactionId = startResponse[2].transactionId;
+    
+    mockWs.send.mockClear(); // Clear previous calls
+    
+    // Now send MeterValues message
+    const meterValuesMessage = JSON.stringify([
+      MESSAGE_TYPE.CALL,
+      'meter-values-message-id',
+      ACTIONS.METER_VALUES,
+      {
+        connectorId: 1,
+        transactionId: transactionId,
+        meterValue: [
+          {
+            timestamp: '2023-01-01T12:30:00.000Z',
+            sampledValue: [
+              {
+                value: '1250',
+                context: 'Sample.Periodic',
+                format: 'Raw',
+                measurand: 'Energy.Active.Import.Register',
+                unit: 'Wh'
+              }
+            ]
+          }
+        ]
+      }
+    ]);
+    
+    // Process the message
+    await processOcppMessage(mockWs, meterValuesMessage);
+    
+    // Parse the sent response
+    const response = JSON.parse(mockWs.send.mock.calls[0][0]);
+    
+    // Verify response structure (empty object in array)
+    expect(response).toBeInstanceOf(Array);
+    expect(response[0]).toBe(MESSAGE_TYPE.CALLRESULT);
+    expect(response[1]).toBe('meter-values-message-id');
+    expect(response[2]).toEqual({});
+    
+    // Get the charge point info to verify meter value was stored
+    const chargePointInfo = stationService.getChargePoint('CP001');
+    
+    // The actual verification would require checking the transaction in transactionService
+    // but we're just testing that the message handler processes the message correctly
+  });
+
+  test('should handle MeterValues with multiple readings', async () => {
+    mockWs.send.mockClear(); // Clear previous calls
+    
+    // Send MeterValues message with multiple readings
+    const meterValuesMessage = JSON.stringify([
+      MESSAGE_TYPE.CALL,
+      'multiple-readings-message-id',
+      ACTIONS.METER_VALUES,
+      {
+        connectorId: 1,
+        meterValue: [
+          {
+            timestamp: '2023-01-01T12:30:00.000Z',
+            sampledValue: [
+              {
+                value: '1250',
+                measurand: 'Energy.Active.Import.Register',
+                unit: 'Wh'
+              },
+              {
+                value: '220',
+                measurand: 'Voltage',
+                unit: 'V'
+              },
+              {
+                value: '10',
+                measurand: 'Current.Import',
+                unit: 'A'
+              }
+            ]
+          }
+        ]
+      }
+    ]);
+    
+    // Process the message
+    await processOcppMessage(mockWs, meterValuesMessage);
+    
+    // Parse the sent response
+    const response = JSON.parse(mockWs.send.mock.calls[0][0]);
+    
+    // Verify response structure
+    expect(response).toBeInstanceOf(Array);
+    expect(response[0]).toBe(MESSAGE_TYPE.CALLRESULT);
+    expect(response[1]).toBe('multiple-readings-message-id');
+    expect(response[2]).toEqual({});
+  });
+
+  test('should reject MeterValues with missing required fields', async () => {
+    mockWs.send.mockClear(); // Clear previous calls
+    
+    // Send invalid MeterValues message missing required fields
+    const invalidMeterValuesMessage = JSON.stringify([
+      MESSAGE_TYPE.CALL,
+      'invalid-meter-values-message-id',
+      ACTIONS.METER_VALUES,
+      {
+        // Missing connectorId
+        meterValue: [
+          {
+            timestamp: '2023-01-01T12:30:00.000Z',
+            sampledValue: [
+              {
+                value: '1250',
+                unit: 'Wh'
+              }
+            ]
+          }
+        ]
+      }
+    ]);
+    
+    // Process the message
+    await processOcppMessage(mockWs, invalidMeterValuesMessage);
+    
+    // Parse the sent response
+    const response = JSON.parse(mockWs.send.mock.calls[0][0]);
+    
+    // Verify it's an error response
+    expect(response[0]).toBe(MESSAGE_TYPE.CALLERROR);
+    expect(response[1]).toBe('invalid-meter-values-message-id');
+    expect(response[2]).toBe('InternalError');
+    expect(response[3]).toContain('required field');
+  });
 }); 

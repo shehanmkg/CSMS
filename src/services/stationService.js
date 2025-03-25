@@ -124,6 +124,54 @@ function handleHeartbeat(chargePointId) {
   });
 }
 
+/**
+ * Update meter value for a charge point connector
+ * 
+ * @param {string} chargePointId - ID of the charge point
+ * @param {number} connectorId - ID of the connector
+ * @param {object} meterValue - Meter value data
+ * @param {number} meterValue.value - The actual meter reading value
+ * @param {string} meterValue.unit - The unit of the meter reading (e.g., 'Wh')
+ * @param {string} meterValue.timestamp - Timestamp when the reading was taken
+ */
+function updateChargePointMeterValue(chargePointId, connectorId, meterValue) {
+  if (!chargePointId) {
+    throw new Error('chargePointId is required');
+  }
+  
+  if (connectorId === undefined) {
+    throw new Error('connectorId is required');
+  }
+  
+  // Get existing data or initialize a new object
+  const existingData = chargePoints.get(chargePointId) || {};
+  
+  // Initialize connector data structure if it doesn't exist
+  const connectors = existingData.connectors || {};
+  const connectorData = connectors[connectorId] || {};
+  
+  // Update connector with meter value
+  connectors[connectorId] = {
+    ...connectorData,
+    meterValue: {
+      value: meterValue.value,
+      unit: meterValue.unit,
+      timestamp: meterValue.timestamp,
+      updatedAt: new Date()
+    }
+  };
+  
+  // Update charge point data with connector information
+  updateChargePoint(chargePointId, { connectors });
+  
+  logger.debug('Updated charge point meter value', {
+    chargePointId,
+    connectorId,
+    value: meterValue.value,
+    unit: meterValue.unit
+  });
+}
+
 module.exports = {
   updateChargePoint,
   getChargePoint,
@@ -131,5 +179,6 @@ module.exports = {
   updateChargePointStatus,
   handleBootNotification,
   handleStatusNotification,
-  handleHeartbeat
+  handleHeartbeat,
+  updateChargePointMeterValue
 }; 

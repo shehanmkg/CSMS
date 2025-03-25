@@ -9,6 +9,7 @@ const bootNotificationHandler = require('./bootNotification');
 const authorizeHandler = require('./authorize');
 const startTransactionHandler = require('./startTransaction');
 const stopTransactionHandler = require('./stopTransaction');
+const meterValuesHandler = require('./meterValues');
 const { logger } = require('../../utils/logger');
 
 // OCPP action names
@@ -32,8 +33,8 @@ const actionHandlers = new Map([
   [ACTIONS.AUTHORIZE, authorizeHandler],
   [ACTIONS.START_TRANSACTION, startTransactionHandler],
   [ACTIONS.STOP_TRANSACTION, stopTransactionHandler],
+  [ACTIONS.METER_VALUES, meterValuesHandler],
   // Add placeholder handlers for unimplemented actions
-  [ACTIONS.METER_VALUES, notImplementedHandler('MeterValues')],
   [ACTIONS.DATA_TRANSFER, notImplementedHandler('DataTransfer')]
 ]);
 
