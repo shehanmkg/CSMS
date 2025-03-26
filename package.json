@@ -18,10 +18,16 @@
     "boot": "node src/scripts/boot-notification.js"
   },
   "dependencies": {
+    "@chakra-ui/react": "2.8.2",
+    "@emotion/react": "11.11.4",
+    "@emotion/styled": "11.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "framer-motion": "11.0.14",
     "helmet": "^7.0.0",
+    "react-icons": "^5.5.0",
+    "react-router-dom": "^7.4.0",
     "uuid": "^11.1.0",
     "winston": "^3.10.0",
     "ws": "^8.14.2"
@@ -62,5 +68,6 @@
   "bugs": {
     "url": "https://github.com/shehanmkg/CSMS/issues"
   },
-  "homepage": "https://github.com/shehanmkg/CSMS#readme"
+  "homepage": "https://github.com/shehanmkg/CSMS#readme",
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }
