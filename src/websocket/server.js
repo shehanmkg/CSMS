@@ -23,12 +23,12 @@ class WebSocketServer {
         this.connections = new Map();
         this.pendingRequests = new Map();
         
+        // Store the server or port, but don't directly use it for attaching
+        // We'll handle the upgrade events manually in app.js
         if (typeof serverOrPort === 'number') {
-            // Standalone mode - create WebSocket server on a specific port
             this.port = serverOrPort;
             this.standalone = true;
         } else {
-            // Attached mode - use existing HTTP server
             this.server = serverOrPort;
             this.standalone = false;
         }
@@ -58,20 +58,16 @@ class WebSocketServer {
                     return protocols[0];
                 }
                 return true;
-            }
+            },
+            // Always use noServer mode since we're handling upgrades manually
+            noServer: true
         };
         
-        // Create WebSocket server based on mode
-        if (this.standalone) {
-            wsOptions.port = this.port;
-            this.wss = new WebSocket.Server(wsOptions);
-            logger.info(`Standalone WebSocket server started on port ${this.port}`);
-        } else {
-            wsOptions.server = this.server;
-            this.wss = new WebSocket.Server(wsOptions);
-            logger.info('WebSocket server attached to existing HTTP server');
-        }
+        // Create WebSocket server
+        this.wss = new WebSocket.Server(wsOptions);
+        logger.info('WebSocket server created in noServer mode');
 
+        // Only need connection handler here, as we'll be routing the upgrades manually
         this.wss.on('connection', this.handleConnection.bind(this));
     }
 
@@ -252,6 +248,38 @@ class WebSocketServer {
      */
     getConnection(chargePointId) {
         return this.connections.get(chargePointId);
+    }
+
+    // Add initialize method
+    initialize(server) {
+        this.server = server;
+        logger.info('WebSocketServer initialized with HTTP server reference');
+        return this;
+    }
+
+    // Add handleUpgrade method for manual handling of upgrade requests
+    handleUpgrade(request, socket, head) {
+        try {
+            // Extract chargePointId from URL path
+            const parsedUrl = url.parse(request.url);
+            const pathSegments = parsedUrl.pathname.split('/').filter(Boolean);
+            
+            if (pathSegments.length === 0) {
+                logger.warn('Connection rejected - No chargePointId in URL');
+                socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+                socket.destroy();
+                return;
+            }
+
+            // Process the upgrade with the WS instance
+            this.wss.handleUpgrade(request, socket, head, (ws) => {
+                this.wss.emit('connection', ws, request);
+            });
+        } catch (error) {
+            logger.error('Error handling WebSocket upgrade:', error);
+            socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+            socket.destroy();
+        }
     }
 }
 

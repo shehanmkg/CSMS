@@ -21,7 +21,7 @@ function updateChargePoint(chargePointId, data) {
   const updatedData = {
     ...existingData,
     ...data,
-    lastUpdated: new Date()
+    lastUpdated: new Date().toISOString()
   };
   
   // Store updated data
@@ -31,6 +31,17 @@ function updateChargePoint(chargePointId, data) {
     chargePointId, 
     updatedFields: Object.keys(data) 
   });
+
+  // Broadcast to frontend clients if available
+  if (global.broadcastToFrontend) {
+    global.broadcastToFrontend('station_update', {
+      chargePointId,
+      updatedFields: Object.keys(data),
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  return updatedData;
 }
 
 /**
@@ -141,6 +152,17 @@ function handleStatusNotification(chargePointId, statusData) {
       connectorId,
       status,
       errorCode
+    });
+  }
+
+  // Broadcast connector status update specifically
+  if (global.broadcastToFrontend) {
+    global.broadcastToFrontend('connector_update', {
+      chargePointId,
+      connectorId,
+      status,
+      errorCode: errorCode || null,
+      timestamp: new Date().toISOString()
     });
   }
 }

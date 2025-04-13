@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Button,
+  Flex,
   Heading,
   Table,
   Thead,
@@ -10,231 +11,492 @@ import {
   Th,
   Td,
   Badge,
-  Flex,
   Input,
   InputGroup,
   InputLeftElement,
-  IconButton,
-  useDisclosure,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
-  FormControl,
-  FormLabel,
   Select,
-  useToast,
-  Spinner,
   Text,
+  Stack,
   SimpleGrid,
   Card,
   CardBody,
   CardHeader,
-  VStack,
   HStack,
-  useBreakpointValue
+  VStack,
+  useBreakpointValue,
+  useDisclosure,
+  Spinner,
+  OrderedList,
+  ListItem
 } from '@chakra-ui/react';
-import { SearchIcon, AddIcon, InfoOutlineIcon, EditIcon } from '@chakra-ui/icons';
-import { stationsApi, ChargingStation } from '../api/api';
+import { toast } from 'react-toastify';
+import { SearchIcon, AddIcon } from '@chakra-ui/icons';
+import { ChargingStation, Connector, connectionManager, stationsApi } from '../api/api';
+import StationDetails from '../components/StationDetails';
+import websocketService, { WebSocketEvent, WebSocketEventHandler } from '../api/websocket';
 
 const Stations: React.FC = () => {
   const [stations, setStations] = useState<ChargingStation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const toast = useToast();
-  
-  // Use breakpoint to determine display mode
-  const displayMode = useBreakpointValue<'table' | 'cards'>({ 
-    base: 'cards', 
-    md: 'table' 
-  }) || 'cards';
+  const [selectedStation, setSelectedStation] = useState<ChargingStation | null>(null);
+  const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
+  const [initialTabIndex, setInitialTabIndex] = useState(0);
+  const { isOpen: isAddStationOpen, onOpen: onAddStationOpen, onClose: onAddStationClose } = useDisclosure();
 
-  // Fetch stations on component mount
+  const isDesktop = useBreakpointValue({ base: false, md: true });
+
+  // Define fetchStationsData at component level scope
+  const fetchStationsData = async () => {
+    setIsLoading(true);
+    try {
+      const data = await stationsApi.getAll();
+      setStations(data);
+    } catch (error) {
+      console.error('Error fetching stations:', error);
+      toast.error('Failed to fetch stations data.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchStations = async () => {
+    let intervalId: NodeJS.Timeout;
+
+    // Initial fetch
+    fetchStationsData();
+
+    // Connect WebSocket and set up event handlers
+    try {
+      websocketService.connect();
+      
+      const handleStationUpdate: WebSocketEventHandler = (data) => {
+        console.log('Station update received:', data);
+        fetchStationsData(); // Refresh data when updates come in
+      };
+      
+      const handleConnectorUpdate: WebSocketEventHandler = (data) => {
+        console.log('Connector update received:', data);
+        fetchStationsData(); // Refresh data when updates come in
+      };
+      
+      const handlePaymentUpdate: WebSocketEventHandler = (data) => {
+        console.log('Payment update received:', data);
+        fetchStationsData(); // Refresh data when updates come in
+        toast.success(`Payment completed for station ${data.chargePointId}`);
+      };
+      
+      // Register event handlers
+      websocketService.on('station_update', handleStationUpdate);
+      websocketService.on('connector_update', handleConnectorUpdate);
+      websocketService.on('payment_update', handlePaymentUpdate);
+      
+      // Subscribe to all stations
+      stations.forEach(station => {
+        websocketService.subscribe(station.id);
+      });
+    } catch (err) {
+      console.error("Error setting up WebSocket in Stations component:", err);
+      // Will fall back to polling
+    }
+
+    // Still keep a polling interval as fallback, but at a longer interval
+    intervalId = setInterval(fetchStationsData, 10000);
+
+    // Clean up
+    return () => {
+      clearInterval(intervalId);
+      
       try {
-        setLoading(true);
-        const data = await stationsApi.getAll();
-        setStations(data);
-      } catch (error) {
-        console.error('Error fetching stations:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to fetch charging stations. Please try again later.',
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
+        // Clean up WebSocket handlers
+        websocketService.off('station_update', handleStationUpdate);
+        websocketService.off('connector_update', handleConnectorUpdate);
+        websocketService.off('payment_update', handlePaymentUpdate);
+        
+        // Unsubscribe from all stations
+        stations.forEach(station => {
+          websocketService.unsubscribe(station.id);
         });
-      } finally {
-        setLoading(false);
+      } catch (err) {
+        console.error("Error cleaning up WebSocket handlers:", err);
       }
     };
+  }, []);
 
-    fetchStations();
-  }, [toast]);
+  // Add a useEffect to handle station subscription updates when stations change
+  useEffect(() => {
+    // Subscribe to all stations
+    stations.forEach(station => {
+      websocketService.subscribe(station.id);
+    });
+  }, [stations]);
+
+  const formatHeartbeatTime = (timestamp: string) => {
+    if (!timestamp) return 'N/A';
+    
+    const heartbeatTime = new Date(timestamp);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - heartbeatTime.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) {
+      return 'Just now';
+    } else if (diffInSeconds < 3600) {
+      return `${Math.floor(diffInSeconds / 60)} min ago`;
+    } else if (diffInSeconds < 86400) {
+      return `${Math.floor(diffInSeconds / 3600)} hr ago`;
+    } else {
+      return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    let colorScheme = 'gray';
+    
+    if (!status) {
+      return <Badge colorScheme="gray">Unknown</Badge>;
+    }
+    
+    switch (status.toLowerCase()) {
+      case 'available':
+        colorScheme = 'green';
+        break;
+      case 'charging':
+        colorScheme = 'blue';
+        break;
+      case 'faulted':
+        colorScheme = 'red';
+        break;
+      case 'unavailable':
+        colorScheme = 'orange';
+        break;
+      case 'reserved':
+        colorScheme = 'purple';
+        break;
+      default:
+        colorScheme = 'gray';
+    }
+    
+    return <Badge colorScheme={colorScheme}>{status}</Badge>;
+  };
+
+  const handleViewDetails = (station: ChargingStation) => {
+    setSelectedStation(station);
+    setInitialTabIndex(0); // Default to info tab
+    setIsViewDetailsOpen(true);
+  };
+
+  const handleChargeButton = (station: ChargingStation) => {
+    setSelectedStation(station);
+    setInitialTabIndex(2); // Set to payment tab index
+    setIsViewDetailsOpen(true);
+  };
+
+  const handleManualRefresh = () => {
+    setIsLoading(true);
+    fetchStationsData();
+    
+    // Trigger a quicker polling temporarily
+    try {
+      connectionManager.startPolling('stations', fetchStationsData);
+    } catch (error) {
+      console.error('Error setting up polling:', error);
+    }
+  };
 
   // Filter stations based on search term and status filter
   const filteredStations = stations.filter(station => {
-    const matchesSearch = searchTerm === '' || 
-                         station.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         station.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         station.vendor.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = 
+      station.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (station.vendor && station.vendor.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (station.model && station.model.toLowerCase().includes(searchTerm.toLowerCase()));
     
-    const matchesStatus = statusFilter === 'all' || station.status === statusFilter;
+    const matchesStatus = 
+      statusFilter === 'all' || 
+      (station.status && station.status.toLowerCase() === statusFilter.toLowerCase());
     
     return matchesSearch && matchesStatus;
   });
 
-  // Format last heartbeat time
-  const formatHeartbeat = (heartbeatTime: string) => {
-    const date = new Date(heartbeatTime);
-    return date.toLocaleTimeString();
+  const hasPreparingConnectors = (station: ChargingStation): boolean => {
+    if (!station.connectors || !Array.isArray(station.connectors)) return false;
+    return station.connectors.some(c => c.status === 'Preparing');
   };
 
-  // Status badges
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Available':
-        return <Badge colorScheme="green">Available</Badge>;
-      case 'Charging':
-        return <Badge colorScheme="blue">Charging</Badge>;
-      case 'Faulted':
-        return <Badge colorScheme="red">Faulted</Badge>;
-      case 'Unavailable':
-        return <Badge colorScheme="orange">Unavailable</Badge>;
-      default:
-        return <Badge>{status}</Badge>;
+  const renderStationCards = () => {
+    if (isLoading && stations.length === 0) {
+      return (
+        <Flex justify="center" py={10}>
+          <Spinner size="xl" />
+        </Flex>
+      );
     }
-  };
-
-  // Get connector power
-  const getConnectorPower = (station: ChargingStation) => {
-    if (station.connectors && station.connectors.length > 0) {
-      const powers = station.connectors.map(c => `${c.power}kW`);
-      return powers.join(', ');
+    
+    if (error) {
+      return (
+        <Box textAlign="center" p={6} color="red.500">
+          <Text>{error}</Text>
+          <Button mt={4} onClick={handleManualRefresh}>Try Again</Button>
+        </Box>
+      );
     }
-    return '—';
-  };
-
-  // Table view for stations
-  const renderStationsTable = () => (
-    <Box overflowX="auto">
-      <Table variant="simple">
-        <Thead>
-          <Tr>
-            <Th>ID</Th>
-            <Th>Vendor/Model</Th>
-            <Th>Status</Th>
-            <Th>Last Heartbeat</Th>
-            <Th>Power</Th>
-            <Th>Actions</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {filteredStations.map((station) => (
-            <Tr key={station.id}>
-              <Td>{station.id}</Td>
-              <Td>{station.vendor} {station.model}</Td>
-              <Td>{getStatusBadge(station.status)}</Td>
-              <Td>{formatHeartbeat(station.lastHeartbeat)}</Td>
-              <Td>{getConnectorPower(station)}</Td>
-              <Td>
-                <Button size="sm" colorScheme="blue" mr={2} leftIcon={<InfoOutlineIcon />}>
-                  View
-                </Button>
-                <Button size="sm" colorScheme="teal" leftIcon={<EditIcon />}>
-                  Edit
-                </Button>
-              </Td>
-            </Tr>
-          ))}
-        </Tbody>
-      </Table>
-    </Box>
-  );
-
-  // Card view for stations (mobile)
-  const renderStationsCards = () => (
-    <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={4}>
-      {filteredStations.map((station) => (
-        <Card key={station.id} shadow="md">
-          <CardHeader pb={2}>
-            <Flex justifyContent="space-between" alignItems="flex-start">
-              <Heading size="md">{station.id}</Heading>
-              {getStatusBadge(station.status)}
-            </Flex>
-            <Text color="gray.600" fontSize="sm">{station.vendor} {station.model}</Text>
-          </CardHeader>
-          <CardBody pt={2}>
-            <VStack align="stretch" spacing={1}>
-              <Flex justify="space-between">
-                <Text fontSize="sm" fontWeight="medium">Last Heartbeat:</Text>
-                <Text fontSize="sm">{formatHeartbeat(station.lastHeartbeat)}</Text>
-              </Flex>
-              <Flex justify="space-between">
-                <Text fontSize="sm" fontWeight="medium">Power:</Text>
-                <Text fontSize="sm">{getConnectorPower(station)}</Text>
-              </Flex>
-              <Flex justify="space-between">
-                <Text fontSize="sm" fontWeight="medium">Connectors:</Text>
-                <Text fontSize="sm">{station.connectors.length}</Text>
-              </Flex>
-              <HStack spacing={2} mt={3} justify="flex-end">
-                <Button size="sm" colorScheme="blue" leftIcon={<InfoOutlineIcon />}>
-                  View
-                </Button>
-                <Button size="sm" colorScheme="teal" leftIcon={<EditIcon />}>
-                  Edit
-                </Button>
-              </HStack>
-            </VStack>
-          </CardBody>
-        </Card>
-      ))}
-    </SimpleGrid>
-  );
-
-  if (loading) {
+    
+    if (filteredStations.length === 0) {
+      return (
+        <Box textAlign="center" p={6}>
+          <Text color="gray.500">No charging stations found</Text>
+        </Box>
+      );
+    }
+    
     return (
-      <Flex p={5} height="200px" justify="center" align="center" direction="column">
-        <Spinner size="xl" color="brand.500" thickness="4px" />
-        <Text mt={4} fontSize="lg">Loading charging stations...</Text>
-      </Flex>
+      <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={6}>
+        {filteredStations.map(station => (
+          <Card key={station.id || `station-${Math.random()}`} boxShadow="md" borderRadius="lg">
+            <CardHeader pb={2}>
+              <HStack justify="space-between" align="center">
+                <Heading size="md">{station.id || 'Unknown'}</Heading>
+                {station.status ? getStatusBadge(station.status) : getStatusBadge('Unknown')}
+              </HStack>
+              <Text fontSize="sm" color="gray.600" mt={1}>
+                {station.vendor || 'Unknown'} {station.model || ''}
+              </Text>
+            </CardHeader>
+            
+            <CardBody pt={0}>
+              <VStack align="stretch" spacing={3}>
+                <Box>
+                  <Text fontSize="sm" fontWeight="medium" mb={2}>
+                    Connectors:
+                  </Text>
+                  {station.connectors && Array.isArray(station.connectors) && station.connectors.length > 0 ? (
+                    station.connectors.map((connector, idx) => (
+                      <HStack key={connector.id || idx} mb={2} spacing={3} p={2} borderWidth="1px" borderRadius="md">
+                        <Badge>{connector.id}</Badge>
+                        <Text fontSize="sm">{connector.type || 'Type 2'}</Text>
+                        <Text fontSize="sm">{connector.power || 0} kW</Text>
+                        <Badge colorScheme={
+                          connector.status === 'Available' ? 'green' : 
+                          connector.status === 'Charging' ? 'blue' : 
+                          connector.status === 'Preparing' ? 'purple' : 
+                          connector.status === 'Faulted' ? 'red' : 'gray'
+                        }>
+                          {connector.status || 'Unknown'}
+                        </Badge>
+                        {connector.meterValue && typeof connector.meterValue === 'object' && (
+                          <Text fontSize="xs">
+                            {connector.meterValue.value !== undefined && connector.meterValue.value !== null ? connector.meterValue.value : 0} 
+                            {' '}{connector.meterValue.unit || 'Wh'}
+                          </Text>
+                        )}
+                        {connector.status === 'Available' && (
+                          <Text fontSize="xs" color="gray.500">
+                            Plugged Out
+                          </Text>
+                        )}
+                        {connector.status === 'Preparing' && (
+                          <Button 
+                            size="xs" 
+                            colorScheme="green"
+                            variant="outline"
+                            onClick={() => handleChargeButton(station)}
+                          >
+                            Pay Now
+                          </Button>
+                        )}
+                      </HStack>
+                    ))
+                  ) : (
+                    <Text fontSize="sm" color="gray.500">No connectors available</Text>
+                  )}
+                </Box>
+                
+                <Text fontSize="sm">
+                  Last seen: {station.lastHeartbeat ? formatHeartbeatTime(station.lastHeartbeat) : 'N/A'}
+                </Text>
+                
+                <HStack pt={2} justify="flex-end" spacing={2}>
+                  <Button 
+                    size="sm" 
+                    colorScheme="blue" 
+                    variant="outline"
+                    onClick={() => handleViewDetails(station)}
+                  >
+                    Details
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    colorScheme="blue"
+                    isDisabled={!hasPreparingConnectors(station)}
+                    onClick={() => handleChargeButton(station)}
+                  >
+                    Pay Now
+                  </Button>
+                </HStack>
+              </VStack>
+            </CardBody>
+          </Card>
+        ))}
+      </SimpleGrid>
     );
-  }
+  };
+
+  const renderStationTable = () => {
+    if (isLoading && stations.length === 0) {
+      return (
+        <Flex justify="center" py={10}>
+          <Spinner size="xl" />
+        </Flex>
+      );
+    }
+    
+    if (error) {
+      return (
+        <Box textAlign="center" p={6} color="red.500">
+          <Text>{error}</Text>
+          <Button mt={4} onClick={handleManualRefresh}>Try Again</Button>
+        </Box>
+      );
+    }
+    
+    if (filteredStations.length === 0) {
+      return (
+        <Box textAlign="center" p={6}>
+          <Text color="gray.500">No charging stations found</Text>
+        </Box>
+      );
+    }
+    
+    return (
+      <Box overflowX="auto">
+        <Table variant="simple">
+          <Thead>
+            <Tr>
+              <Th>ID</Th>
+              <Th>Vendor/Model</Th>
+              <Th>Status</Th>
+              <Th>Connectors</Th>
+              <Th>Last Heartbeat</Th>
+              <Th>Actions</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {filteredStations.map(station => {
+              const stationId = station.id || `station-${Math.random().toString(36).substring(2)}`;
+              return (
+                <Tr key={stationId}>
+                  <Td>{station.id || 'N/A'}</Td>
+                  <Td>{(station.vendor || 'Unknown') + ' ' + (station.model || '')}</Td>
+                  <Td>{station.status ? getStatusBadge(station.status) : getStatusBadge('Unknown')}</Td>
+                  <Td>
+                    <VStack align="start" spacing={1}>
+                      {station.connectors && Array.isArray(station.connectors) && station.connectors.length > 0 ? 
+                        station.connectors.map((connector, idx) => (
+                          <HStack key={connector.id || idx} spacing={2} mb={2} p={1} borderWidth="1px" borderRadius="sm">
+                            <Badge 
+                              colorScheme={
+                                connector.status === 'Available' ? 'green' : 
+                                connector.status === 'Charging' ? 'blue' : 
+                                connector.status === 'Preparing' ? 'purple' : 
+                                connector.status === 'Faulted' ? 'red' : 'gray'
+                              }
+                            >
+                              {connector.id}
+                            </Badge>
+                            <Text fontSize="xs">{connector.type}, {connector.power} kW</Text>
+                            {connector.meterValue && typeof connector.meterValue === 'object' && (
+                              <Text fontSize="xs">
+                                {connector.meterValue.value !== undefined && connector.meterValue.value !== null ? connector.meterValue.value : 0} 
+                                {' '}{connector.meterValue.unit || 'Wh'}
+                              </Text>
+                            )}
+                            {connector.status === 'Available' && (
+                              <Text fontSize="xs" color="gray.500">
+                                Plugged Out
+                              </Text>
+                            )}
+                            {connector.status === 'Preparing' && (
+                              <Button 
+                                size="xs" 
+                                colorScheme="green"
+                                variant="outline"
+                                onClick={() => handleChargeButton(station)}
+                              >
+                                Pay Now
+                              </Button>
+                            )}
+                          </HStack>
+                        )) : 
+                        <Text fontSize="xs">No connectors</Text>
+                      }
+                    </VStack>
+                  </Td>
+                  <Td>{station.lastHeartbeat ? formatHeartbeatTime(station.lastHeartbeat) : 'N/A'}</Td>
+                  <Td>
+                    <HStack spacing={2}>
+                      <Button 
+                        size="sm" 
+                        colorScheme="blue" 
+                        variant="outline"
+                        onClick={() => handleViewDetails(station)}
+                      >
+                        Details
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        colorScheme="blue"
+                        isDisabled={!hasPreparingConnectors(station)}
+                        onClick={() => handleChargeButton(station)}
+                      >
+                        Pay Now
+                      </Button>
+                    </HStack>
+                  </Td>
+                </Tr>
+              );
+            })}
+          </Tbody>
+        </Table>
+      </Box>
+    );
+  };
 
   return (
-    <Box width="100%">
+    <Box>
       <Flex 
+        mb={6} 
         justifyContent="space-between" 
-        alignItems="center" 
-        mb={{ base: 4, md: 6 }}
-        flexDirection={{ base: 'column', sm: 'row' }}
-        gap={{ base: 2, sm: 0 }}
+        alignItems="center"
+        direction={{ base: 'column', md: 'row' }}
+        gap={4}
       >
-        <Heading size={{ base: "lg", md: "xl" }}>Charging Stations</Heading>
+        <Heading size="lg">Charging Stations</Heading>
         <Button 
           leftIcon={<AddIcon />} 
-          colorScheme="brand" 
-          onClick={onOpen}
-          width={{ base: 'full', sm: 'auto' }}
+          colorScheme="blue" 
+          onClick={onAddStationOpen}
         >
           Add Station
         </Button>
       </Flex>
-
-      <Flex 
-        mb={{ base: 4, md: 6 }} 
-        gap={4} 
-        flexWrap={{ base: 'wrap', md: 'nowrap' }}
-        direction={{ base: 'column', md: 'row' }}
+      
+      <Box mb={6} p={4} bg="blue.50" borderRadius="md">
+        <Heading size="sm" mb={2} color="blue.700">How to charge your vehicle:</Heading>
+        <OrderedList spacing={1} pl={5} color="blue.700">
+          <ListItem>Connect your vehicle to an available charging connector (status will change to "Preparing")</ListItem>
+          <ListItem>When connector shows "Preparing" status, click "Pay Now" button</ListItem>
+          <ListItem>Complete the payment process</ListItem>
+          <ListItem>After payment, charging will begin automatically (status will change to "Charging")</ListItem>
+        </OrderedList>
+      </Box>
+      
+      <Stack 
+        direction={{ base: 'column', md: 'row' }} 
+        mb={6} 
+        spacing={4}
       >
-        <InputGroup>
+        <InputGroup maxW={{ base: '100%', md: '300px' }}>
           <InputLeftElement pointerEvents="none">
             <SearchIcon color="gray.300" />
           </InputLeftElement>
@@ -246,65 +508,42 @@ const Stations: React.FC = () => {
         </InputGroup>
         
         <Select 
-          width={{ base: 'full', md: '200px' }}
+          maxW={{ base: '100%', md: '200px' }} 
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
           <option value="all">All Statuses</option>
-          <option value="Available">Available</option>
-          <option value="Charging">Charging</option>
-          <option value="Faulted">Faulted</option>
-          <option value="Unavailable">Unavailable</option>
+          <option value="available">Available</option>
+          <option value="charging">Charging</option>
+          <option value="faulted">Faulted</option>
+          <option value="unavailable">Unavailable</option>
         </Select>
-      </Flex>
-
-      {filteredStations.length === 0 ? (
-        <Text textAlign="center" p={6} bg="gray.50" borderRadius="md">
-          No stations match your search criteria.
-        </Text>
-      ) : displayMode === 'table' ? renderStationsTable() : renderStationsCards()}
-
-      {/* Add Station Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size={{ base: 'full', md: 'md' }}>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Add New Charging Station</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <FormControl mb={4}>
-              <FormLabel>Station ID</FormLabel>
-              <Input placeholder="Enter station ID" />
-            </FormControl>
-            <FormControl mb={4}>
-              <FormLabel>Vendor</FormLabel>
-              <Input placeholder="Enter vendor name" />
-            </FormControl>
-            <FormControl mb={4}>
-              <FormLabel>Model</FormLabel>
-              <Input placeholder="Enter model name" />
-            </FormControl>
-            <FormControl mb={4}>
-              <FormLabel>Number of Connectors</FormLabel>
-              <Select>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="4">4</option>
-              </Select>
-            </FormControl>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button colorScheme="gray" mr={3} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button colorScheme="brand">
-              Add Station
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        
+        <Button 
+          colorScheme="blue" 
+          variant="outline"
+          onClick={handleManualRefresh}
+          isLoading={isLoading}
+        >
+          Refresh
+        </Button>
+      </Stack>
+      
+      {isDesktop ? renderStationTable() : renderStationCards()}
+      
+      {/* Station Details Modal */}
+      {isViewDetailsOpen && selectedStation && (
+        <StationDetails
+          station={selectedStation}
+          isOpen={isViewDetailsOpen}
+          onClose={() => setIsViewDetailsOpen(false)}
+          initialTabIndex={initialTabIndex}
+        />
+      )}
+      
+      {/* Add Station Modal will be implemented later */}
     </Box>
   );
 };
 
-export default Stations; 
+export default Stations;

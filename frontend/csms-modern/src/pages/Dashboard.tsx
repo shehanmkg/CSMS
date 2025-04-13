@@ -39,29 +39,54 @@ const Dashboard: React.FC = () => {
         // Fetch stations to get status distribution
         const stations = await stationsApi.getAll();
         
-        // Count stations by status
-        const statusCount: Record<string, number> = {};
+        // Count stations by status (case-insensitive)
+        const statusCount: Record<string, number> = {
+          'Available': 0,
+          'Charging': 0,
+          'Faulted': 0,
+          'Unavailable': 0,
+          'Other': 0
+        };
+        
         stations.forEach(station => {
-          statusCount[station.status] = (statusCount[station.status] || 0) + 1;
+          if (!station.status) {
+            statusCount['Other']++;
+            return;
+          }
+          
+          const status = station.status.toLowerCase();
+          if (status === 'available') {
+            statusCount['Available']++;
+          } else if (status === 'charging') {
+            statusCount['Charging']++;
+          } else if (status === 'faulted') {
+            statusCount['Faulted']++;
+          } else if (status === 'unavailable') {
+            statusCount['Unavailable']++;
+          } else {
+            statusCount['Other']++;
+          }
         });
+        
         setStationStatus(statusCount);
         
         // Fetch recent transactions to show as activity
         const transactions = await transactionsApi.getAll();
         
-        // Sort transactions by start time, newest first, and take the 5 most recent
+        // Sort transactions by start time and take the 5 most recent
         const sortedTransactions = [...transactions]
-          .sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime())
+          .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
           .slice(0, 5);
         
         // Transform transactions into activity items
         const activityItems = sortedTransactions.map(tx => {
-          const isActive = !tx.stopTimestamp;
+          const isActive = !tx.endTime;
           return {
-            id: tx.transactionId,
-            stationId: tx.chargePointId,
-            time: new Date(isActive ? tx.startTimestamp : tx.stopTimestamp || '').toLocaleTimeString(),
-            event: isActive ? 'started charging' : 'completed charging'
+            id: tx.id,
+            stationId: tx.stationId,
+            time: new Date(isActive ? tx.startTime : tx.endTime || '').toLocaleTimeString(),
+            event: isActive ? 'started charging' : 'completed charging',
+            status: tx.status
           };
         });
         
@@ -111,7 +136,9 @@ const Dashboard: React.FC = () => {
         
         <Stat p={{ base: 3, md: 5 }} shadow="md" border="1px" borderColor="gray.200" borderRadius="md" bg="white">
           <StatLabel fontSize={{ base: "sm", md: "md" }}>Energy Delivered</StatLabel>
-          <StatNumber fontSize={{ base: "2xl", md: "3xl" }} color="green.500">{stats ? (stats.totalEnergyDelivered / 1000).toFixed(1) : 0} kWh</StatNumber>
+          <StatNumber fontSize={{ base: "2xl", md: "3xl" }} color="green.500">
+            {stats ? ((stats.totalEnergyDelivered || 0) / 1000).toFixed(1) : 0} kWh
+          </StatNumber>
           <StatHelpText>Total</StatHelpText>
         </Stat>
       </SimpleGrid>
@@ -172,9 +199,7 @@ const Dashboard: React.FC = () => {
                 </Flex>
                 <Flex justify="space-between" align="center">
                   <Text color="gray.500" fontWeight="bold">Other</Text>
-                  <Text>{Object.keys(stationStatus)
-                    .filter(key => !['Available', 'Charging', 'Faulted', 'Unavailable'].includes(key))
-                    .reduce((sum, key) => sum + stationStatus[key], 0)}</Text>
+                  <Text>{stationStatus['Other'] || 0}</Text>
                 </Flex>
               </SimpleGrid>
             </CardBody>

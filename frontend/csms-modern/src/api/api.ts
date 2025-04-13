@@ -2,40 +2,60 @@
 // This service handles all API communication with the backend
 
 import axios from 'axios';
+import { toast } from 'react-toastify';
+import websocketService from './websocket';
 
-// Station types
+// Types
+export interface Connector {
+  id: string;
+  status: string;
+  power: number;
+  type: string;
+  currentSession?: string;
+  meterValue?: {
+    value: number;
+    unit: string;
+    timestamp?: string;
+  };
+}
+
 export interface ChargingStation {
   id: string;
-  model: string;
-  vendor: string;
-  serialNumber: string;
-  firmwareVersion: string;
-  connectors: Connector[];
-  status: string;
-  lastHeartbeat: string;
-  networkStatus: string;
-  errorCode?: string;
+  name: string;
+  location?: string;
+  description?: string;
+  status?: string;
+  lastHeartbeat?: string;
+  vendor?: string;
+  model?: string;
+  chargePointVendor?: string;
+  chargePointModel?: string;
+  connectors: { [id: string]: Connector } | Connector[];
+  transactions?: Transaction[];
 }
 
-export interface Connector {
-  id: number;
-  status: string;
-  availability: string;
-  type: string;
-  power: number;
-}
-
-// Transaction types
 export interface Transaction {
-  transactionId: string;
-  chargePointId: string;
-  connectorId: number;
-  idTag: string;
-  startTimestamp: string;
-  stopTimestamp?: string;
+  id: string;
+  stationId: string;
+  connectorId: string;
+  startTime: string;
+  endTime?: string;
   meterStart: number;
   meterStop?: number;
-  energyUsed?: number;
+  consumedEnergy?: number;
+  amount?: number;
+  status: string;
+  idTag?: string;
+}
+
+export interface PaymentDetails {
+  stationId: string;
+  connectorId: string;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'completed' | 'failed';
+  createdAt: string;
+  sessionId?: string;
 }
 
 // Dashboard statistics
@@ -60,10 +80,10 @@ export class ApiError extends Error {
 }
 
 // Use axios for API requests
+const API_URL = '/api';
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_URL,
   headers: {
-    'Accept': 'application/json',
     'Content-Type': 'application/json',
   }
 });
@@ -85,98 +105,108 @@ api.interceptors.response.use(
 // Sample data for fallback
 const sampleStations: ChargingStation[] = [
   {
-    id: 'CP01',
-    model: 'PowerCharger',
-    vendor: 'ChargeTech',
-    serialNumber: 'SN12345',
-    firmwareVersion: '2.3.1',
-    connectors: [
-      { id: 1, status: 'Available', availability: 'Operative', type: 'Type 2', power: 22 },
-      { id: 2, status: 'Charging', availability: 'Operative', type: 'CCS', power: 50 }
-    ],
+    id: 'CS001',
+    vendor: 'ABB',
+    model: 'Terra 54',
     status: 'Available',
     lastHeartbeat: new Date().toISOString(),
-    networkStatus: 'Connected'
+    connectors: [
+      { id: '1', status: 'Available', power: 22, type: 'Type 2' },
+      { id: '2', status: 'Available', power: 50, type: 'CCS' }
+    ],
+    firmwareVersion: '1.5.2',
+    updateAvailable: false
   },
   {
-    id: 'CP02',
-    model: 'RapidCharger',
-    vendor: 'EVTech',
-    serialNumber: 'SN67890',
-    firmwareVersion: '1.8.5',
-    connectors: [
-      { id: 1, status: 'Charging', availability: 'Operative', type: 'Type 2', power: 22 }
-    ],
+    id: 'CS002',
+    vendor: 'ChargePoint',
+    model: 'CT4000',
     status: 'Charging',
     lastHeartbeat: new Date().toISOString(),
-    networkStatus: 'Connected'
+    connectors: [
+      { id: '1', status: 'Charging', power: 7, type: 'Type 2', currentSession: '15.7 kWh' },
+      { id: '2', status: 'Available', power: 7, type: 'Type 2' }
+    ],
+    firmwareVersion: '2.1.0',
+    updateAvailable: true
   },
   {
-    id: 'CP03',
-    model: 'SuperCharger',
-    vendor: 'PowerCo',
-    serialNumber: 'SN54321',
-    firmwareVersion: '3.0.1',
+    id: 'CS003',
+    vendor: 'Tesla',
+    model: 'Wall Connector',
+    status: 'Faulted',
+    lastHeartbeat: new Date(Date.now() - 3600000).toISOString(),
     connectors: [
-      { id: 1, status: 'Available', availability: 'Operative', type: 'Type 2', power: 11 },
-      { id: 2, status: 'Available', availability: 'Operative', type: 'CCS', power: 50 }
+      { id: '1', status: 'Faulted', power: 11, type: 'Type 2' }
     ],
-    status: 'Available',
-    lastHeartbeat: new Date().toISOString(),
-    networkStatus: 'Connected'
+    firmwareVersion: '3.2.1',
+    updateAvailable: false
   }
 ];
 
 const sampleTransactions: Transaction[] = [
   {
-    transactionId: 'TX001',
-    chargePointId: 'CP01',
-    connectorId: 2,
-    idTag: 'RFID1234',
-    startTimestamp: new Date(Date.now() - 45 * 60000).toISOString(),
-    meterStart: 1000,
-    energyUsed: 12500
+    id: 'TX001',
+    stationId: 'CS001',
+    userId: 'user123',
+    startTime: new Date(Date.now() - 7200000).toISOString(),
+    endTime: new Date(Date.now() - 5400000).toISOString(),
+    status: 'Completed',
+    energy: 25.3,
+    cost: 12.65
   },
   {
-    transactionId: 'TX002',
-    chargePointId: 'CP02',
-    connectorId: 1,
-    idTag: 'RFID5678',
-    startTimestamp: new Date(Date.now() - 30 * 60000).toISOString(),
-    meterStart: 2000,
-    energyUsed: 8000
-  },
-  {
-    transactionId: 'TX003',
-    chargePointId: 'CP03',
-    connectorId: 1,
-    idTag: 'RFID9012',
-    startTimestamp: new Date(Date.now() - 120 * 60000).toISOString(),
-    stopTimestamp: new Date(Date.now() - 60 * 60000).toISOString(),
-    meterStart: 3000,
-    meterStop: 18000,
-    energyUsed: 15000
+    id: 'TX002',
+    stationId: 'CS002',
+    userId: 'user456',
+    startTime: new Date(Date.now() - 3600000).toISOString(),
+    endTime: '',
+    status: 'In Progress',
+    energy: 15.7,
+    cost: 7.85
   }
 ];
 
-// API modules with fallback to sample data for missing endpoints
+// API Modules
 export const stationsApi = {
-  getAll: async (): Promise<ChargingStation[]> => {
+  async getAll(): Promise<ChargingStation[]> {
     try {
       const response = await api.get('/stations');
       return response.data.stations || [];
     } catch (error) {
-      console.warn('Falling back to sample stations data', error);
+      console.warn('Failed to fetch stations from API, using sample data', error);
       return sampleStations;
     }
   },
   
-  getById: async (id: string): Promise<ChargingStation> => {
+  async getById(id: string): Promise<ChargingStation> {
     try {
       const response = await api.get(`/stations/${id}`);
-      return response.data.station;
+      const stationData = response.data.station;
+      
+      // Normalize connectors for consistent handling
+      if (stationData.connectors) {
+        if (!Array.isArray(stationData.connectors) && typeof stationData.connectors === 'object') {
+          // Convert object-based connectors to array format
+          stationData.connectors = Object.entries(stationData.connectors).map(
+            ([connectorId, data]) => ({
+              id: connectorId,
+              ...(data as any)
+            })
+          );
+        }
+      } else {
+        stationData.connectors = [];
+      }
+      
+      return {
+        ...stationData,
+        vendor: stationData.vendor || stationData.chargePointVendor || 'Unknown',
+        model: stationData.model || stationData.chargePointModel || 'Unknown'
+      };
     } catch (error) {
-      console.warn(`Falling back to sample station data for ${id}`, error);
+      console.warn(`Failed to fetch station ${id} from API, using sample data`, error);
+      // For demo purposes, return a sample station when API fails
       const station = sampleStations.find(s => s.id === id);
       if (!station) throw new Error(`Station ${id} not found`);
       return station;
@@ -193,130 +223,342 @@ export const stationsApi = {
 };
 
 export const transactionsApi = {
-  getAll: async (): Promise<Transaction[]> => {
+  async getAll(): Promise<Transaction[]> {
     try {
       const response = await api.get('/transactions');
       return response.data.transactions || [];
     } catch (error) {
-      console.warn('Falling back to sample transactions data', error);
+      console.warn('Failed to fetch transactions from API, using sample data', error);
       return sampleTransactions;
     }
   },
   
-  getById: async (id: string): Promise<Transaction> => {
-    try {
-      const response = await api.get(`/transactions/${id}`);
-      return response.data.transaction;
-    } catch (error) {
-      console.warn(`Falling back to sample transaction data for ${id}`, error);
-      const transaction = sampleTransactions.find(t => t.transactionId === id);
-      if (!transaction) throw new Error(`Transaction ${id} not found`);
-      return transaction;
-    }
-  },
-  
-  getByStationId: async (stationId: string): Promise<Transaction[]> => {
+  async getByStationId(stationId: string): Promise<Transaction[]> {
     try {
       const response = await api.get(`/stations/${stationId}/transactions`);
       return response.data.transactions || [];
     } catch (error) {
-      console.warn(`Falling back to sample transactions for station ${stationId}`, error);
-      return sampleTransactions.filter(t => t.chargePointId === stationId);
+      console.warn(`Failed to fetch transactions for station ${stationId} from API, using sample data`, error);
+      return sampleTransactions.filter(t => t.stationId === stationId);
     }
   }
 };
 
 export const dashboardApi = {
-  getStats: async (): Promise<DashboardStats> => {
+  async getStats(): Promise<DashboardStats> {
     try {
-      // Try to get stats from API
       const response = await api.get('/dashboard/stats');
       return response.data;
     } catch (error) {
-      console.warn('Falling back to computed dashboard stats', error);
+      console.warn('Failed to fetch dashboard stats from API, computing from sample data', error);
       
-      // Compute dashboard stats from sample data
-      const activeStations = sampleStations.filter(s => s.status === 'Charging').length;
-      const activeTransactions = sampleTransactions.filter(t => !t.stopTimestamp).length;
-      const totalEnergyDelivered = sampleTransactions.reduce((sum, t) => sum + (t.energyUsed || 0), 0);
+      // Compute stats from sample data
+      const activeStations = sampleStations.filter(s => s.status === 'Available' || s.status === 'Charging').length;
+      const totalStations = sampleStations.length;
+      const activeTransactions = sampleTransactions.filter(t => !t.endTime).length;
       
-      // Calculate average session duration from completed transactions
-      const completedTransactions = sampleTransactions.filter(t => t.stopTimestamp);
-      const averageSessionDuration = completedTransactions.length > 0 
-        ? completedTransactions.reduce((sum, t) => {
-            const start = new Date(t.startTimestamp).getTime();
-            const end = new Date(t.stopTimestamp!).getTime();
-            return sum + (end - start) / (60 * 1000); // Convert to minutes
-          }, 0) / completedTransactions.length
-        : 0;
+      const totalEnergyDelivered = sampleTransactions.reduce((sum, tx) => sum + tx.energy, 0);
       
       return {
-        totalStations: sampleStations.length,
         activeStations,
-        totalTransactions: sampleTransactions.length,
+        totalStations,
         activeTransactions,
         totalEnergyDelivered,
-        averageSessionDuration: Math.round(averageSessionDuration)
+        totalTransactions: sampleTransactions.length,
+        averageSessionDuration: 45 // minutes
       };
     }
   },
   
-  getEnergyUsageByDay: async (): Promise<any[]> => {
+  async getEnergyUsageByDay(): Promise<any[]> {
     try {
-      const response = await api.get('/dashboard/energy-by-day');
+      const response = await api.get('/dashboard/energy');
       return response.data.energyData || [];
     } catch (error) {
-      console.warn('Falling back to sample energy usage data', error);
-      return [
-        { day: 'Monday', value: 65 },
-        { day: 'Tuesday', value: 82 },
-        { day: 'Wednesday', value: 73 },
-        { day: 'Thursday', value: 92 },
-        { day: 'Friday', value: 86 },
-        { day: 'Saturday', value: 60 },
-        { day: 'Sunday', value: 55 }
-      ];
+      console.warn('Failed to fetch energy usage data from API, using sample data', error);
+      
+      // Generate 7 days of sample data
+      const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      return days.map(day => ({
+        day,
+        value: Math.floor(Math.random() * 100) + 50
+      }));
     }
   },
   
-  getUtilizationByHour: async (): Promise<any[]> => {
+  async getUtilizationByHour(): Promise<any[]> {
     try {
-      const response = await api.get('/dashboard/utilization-by-hour');
+      const response = await api.get('/dashboard/utilization');
       return response.data.utilizationData || [];
     } catch (error) {
-      console.warn('Falling back to sample utilization data', error);
-      return [
-        { hour: '12 AM', value: 15 },
-        { hour: '3 AM', value: 8 },
-        { hour: '6 AM', value: 23 },
-        { hour: '9 AM', value: 42 },
-        { hour: '12 PM', value: 65 },
-        { hour: '3 PM', value: 72 },
-        { hour: '6 PM', value: 58 },
-        { hour: '9 PM', value: 35 }
-      ];
+      console.warn('Failed to fetch utilization data from API, using sample data', error);
+      
+      // Generate hourly utilization data
+      return Array.from({ length: 24 }, (_, i) => ({
+        hour: `${i}:00`,
+        value: Math.floor(Math.random() * 70) + 10
+      }));
     }
   },
   
-  getStatusDistribution: async (): Promise<any[]> => {
+  async getStatusDistribution(): Promise<any[]> {
     try {
-      const response = await api.get('/dashboard/status-distribution');
+      const response = await api.get('/dashboard/status');
       return response.data.statusData || [];
     } catch (error) {
-      console.warn('Falling back to sample status distribution data', error);
+      console.warn('Failed to fetch status distribution from API, using sample data', error);
+      
       return [
         { status: 'Available', count: 7 },
         { status: 'Charging', count: 5 },
         { status: 'Faulted', count: 2 },
-        { status: 'Unavailable', count: 1 },
-        { status: 'Reserved', count: 0 }
+        { status: 'Unavailable', count: 1 }
       ];
     }
   }
 };
 
-export default {
-  stations: stationsApi,
-  transactions: transactionsApi,
-  dashboard: dashboardApi
-}; 
+// Add proper definition for the processPayment function that's called in paymentApi
+/**
+ * Process payment for charging
+ */
+const processPayment = async (paymentId: string): Promise<{ success: boolean; message: string; data?: any }> => {
+  try {
+    const response = await api.post('/payment/complete', { paymentId });
+    
+    // Log successful response
+    console.log('Payment processing successful:', response.data);
+    
+    return {
+      success: true,
+      message: 'Payment processed successfully',
+      data: response.data
+    };
+  } catch (error: any) {
+    // Log detailed error information
+    console.error('Payment processing failed:', error);
+    
+    // Get error details from the response if available
+    const errorMessage = error.response?.data?.message || 
+                         error.message || 
+                         'Unknown error occurred during payment';
+    
+    return {
+      success: false,
+      message: errorMessage
+    };
+  }
+};
+
+export const paymentApi = {
+  processPayment: async (stationId: string, connectorId: string): Promise<{ success: boolean; message: string; transactionId?: string }> => {
+    try {
+      // Generate a payment ID with the format payment_stationId_connectorId_timestamp
+      const paymentId = `payment_${stationId}_${connectorId}_${Date.now()}`;
+      
+      // Process the payment
+      const response = await processPayment(paymentId);
+      
+      return {
+        success: response.success,
+        message: response.message,
+        transactionId: response.data?.transactionId
+      };
+    } catch (error: any) {
+      console.error('Payment processing error:', error);
+      return {
+        success: false,
+        message: error.message || 'Payment processing failed'
+      };
+    }
+  }
+};
+
+// WebSocket singleton for real-time updates
+class WebSocketManager {
+  private socket: WebSocket | null = null;
+  private listeners: Map<string, Set<Function>> = new Map();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectDelay = 2000;
+  private connecting = false;
+
+  constructor() {
+    // Initialize any needed properties
+  }
+
+  public connect(): void {
+    if (this.socket?.readyState === WebSocket.OPEN || this.connecting) return;
+    
+    this.connecting = true;
+    
+    // Determine correct WebSocket URL based on current window location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsURL = `${protocol}//${host.replace('5173', '9220')}/ws`;
+    
+    console.log(`Connecting to WebSocket at ${wsURL}`);
+    
+    try {
+      this.socket = new WebSocket(wsURL);
+      
+      this.socket.onopen = () => {
+        console.log('WebSocket connection established');
+        this.reconnectAttempts = 0;
+        this.connecting = false;
+        this.emit('connection', { status: 'connected' });
+      };
+      
+      this.socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          // Handle different message types
+          if (data.type && data.payload) {
+            this.emit(data.type, data.payload);
+          } else {
+            // If no type is specified, emit as general update
+            this.emit('update', data);
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+      
+      this.socket.onclose = (event) => {
+        console.log('WebSocket connection closed', event.code, event.reason);
+        this.connecting = false;
+        this.emit('connection', { status: 'disconnected' });
+        
+        // Attempt to reconnect if not explicitly closed
+        if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          setTimeout(() => this.connect(), this.reconnectDelay);
+        }
+      };
+      
+      this.socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        this.connecting = false;
+        this.emit('connection', { status: 'error', error });
+      };
+    } catch (error) {
+      console.error('Failed to create WebSocket connection:', error);
+      this.connecting = false;
+    }
+  }
+
+  public disconnect(): void {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.close(1000, 'Client disconnected');
+    }
+  }
+
+  public on(event: string, callback: Function): void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)?.add(callback);
+  }
+
+  public off(event: string, callback: Function): void {
+    if (this.listeners.has(event)) {
+      this.listeners.get(event)?.delete(callback);
+    }
+  }
+
+  private emit(event: string, data: any): void {
+    if (this.listeners.has(event)) {
+      this.listeners.get(event)?.forEach(callback => {
+        try {
+          callback(data);
+        } catch (error) {
+          console.error(`Error in WebSocket listener for event ${event}:`, error);
+        }
+      });
+    }
+  }
+
+  public send(data: any): void {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(data));
+    } else {
+      console.warn('WebSocket is not connected, cannot send message');
+    }
+  }
+
+  public isConnected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+}
+
+// Export the WebSocket manager
+export const websocketManager = new WebSocketManager();
+
+// Connection manager for optimized polling
+class ConnectionManager {
+  private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  
+  // Default polling intervals in ms
+  private defaultIntervals = {
+    stations: 5000,       // 5 seconds for stations
+    transactions: 10000,  // 10 seconds for transactions
+    default: 5000         // 5 seconds default
+  };
+
+  // Start polling for a resource
+  startPolling(resourceKey: string, callback: () => void): void {
+    // Stop any existing interval for this resource
+    this.stopPolling(resourceKey);
+    
+    // Determine appropriate interval
+    let interval = this.defaultIntervals.default;
+    if (resourceKey === 'stations') {
+      interval = this.defaultIntervals.stations;
+    } else if (resourceKey === 'transactions' || resourceKey.startsWith('transactions_')) {
+      interval = this.defaultIntervals.transactions;
+    } else if (resourceKey.startsWith('station_')) {
+      interval = this.defaultIntervals.stations;
+    }
+    
+    // If the resource is a station, also subscribe to WebSocket updates for it
+    if (resourceKey.startsWith('station_')) {
+      const stationId = resourceKey.replace('station_', '');
+      if (stationId) {
+        websocketService.subscribe(stationId);
+      }
+    }
+    
+    // Start the interval
+    const intervalId = setInterval(callback, interval);
+    this.pollingIntervals.set(resourceKey, intervalId);
+  }
+
+  // Stop polling for a resource
+  stopPolling(resourceKey: string): void {
+    const interval = this.pollingIntervals.get(resourceKey);
+    if (interval) {
+      clearInterval(interval);
+      this.pollingIntervals.delete(resourceKey);
+      
+      // If the resource is a station, also unsubscribe from WebSocket updates
+      if (resourceKey.startsWith('station_')) {
+        const stationId = resourceKey.replace('station_', '');
+        if (stationId) {
+          websocketService.unsubscribe(stationId);
+        }
+      }
+    }
+  }
+
+  // Check if polling is active for a resource
+  isPolling(resourceKey: string): boolean {
+    return this.pollingIntervals.has(resourceKey);
+  }
+}
+
+// Export the connection manager
+export const connectionManager = new ConnectionManager();
+
+// Export api instance for direct use in components if needed
+export default api; 
