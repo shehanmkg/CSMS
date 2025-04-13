@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   ModalOverlay,
@@ -29,7 +29,9 @@ import {
   Spinner,
   Heading,
   OrderedList,
-  ListItem
+  ListItem,
+  SimpleGrid,
+  TableContainer
 } from '@chakra-ui/react';
 import { toast } from 'react-toastify';
 import { ChargingStation, Transaction, Connector, connectionManager, stationsApi, transactionsApi } from '../api/api';
@@ -46,94 +48,94 @@ interface StationDetailsProps {
 const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClose, initialTabIndex = 0 }) => {
   const [tabIndex, setTabIndex] = useState(initialTabIndex);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null);
   const [updatedStation, setUpdatedStation] = useState<ChargingStation>(station);
-  const [connectors, setConnectors] = useState<Connector[]>(station.connectors || []);
   const [error, setError] = useState<string | null>(null);
 
-  // Define WebSocket handlers in the component scope
-  const handleStationUpdate: WebSocketEventHandler = (data) => {
-    console.log('Station update received in details:', data);
-    if (data.chargePointId === station.id) {
-      fetchStationData();
-    }
-  };
+  // --- Callback Definitions (Order matters for dependencies) ---
 
-  const handleConnectorUpdate: WebSocketEventHandler = (data) => {
-    console.log('Connector update received in details:', data);
-    if (data.chargePointId === station.id) {
-      fetchStationData();
-    }
-  };
-
-  const handlePaymentUpdate: WebSocketEventHandler = (data) => {
-    console.log('Payment update received in details:', data);
-    if (data.chargePointId === station.id) {
-      fetchStationData();
-      toast.success(`Payment completed for connector ${data.connectorId}`);
-    }
-  };
-
-  // Define mutable isMounted variable for tracking component mounting state
-  let isMounted = true;
-
-  // Define loadTransactions function at component level scope
-  const loadTransactions = async (stationId: string) => {
-    if (!isMounted) return;
-
+  // 1. loadTransactions
+  const loadTransactions = useCallback(async (stationId: string, signal?: AbortSignal) => {
+    // No direct isMounted check needed here if caller handles it or uses signal
     try {
-      const stationTransactions = await transactionsApi.getByStationId(stationId);
-      if (isMounted) {
-        setTransactions(stationTransactions);
+      const stationTransactions = await transactionsApi.getByStationId(stationId); // Assuming getByStationId accepts signal if needed
+      // Check signal before setting state if passed
+      if (signal && signal.aborted) return;
+      setTransactions(stationTransactions);
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error(`Error loading transactions for station ${stationId}:`, error);
       }
-    } catch (error) {
-      console.error(`Error loading transactions for station ${stationId}:`, error);
     }
-  };
+    // No need to check isMounted before setState if using the effect cleanup pattern correctly
+  }, []); // Assuming transactionsApi is stable
 
-  // Define fetchStationData at component level scope to make it accessible everywhere in the component
-  const fetchStationData = async () => {
+  // 2. fetchStationData (depends on loadTransactions)
+  const fetchStationData = useCallback(async (signal?: AbortSignal) => {
+    if (!station.id) return;
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      const data = await stationsApi.getById(station.id);
-      if (isMounted) {
-        setUpdatedStation(data);
-        setConnectors(data.connectors || []);
-        setError(null);
-        // Update transactions for this station
-        loadTransactions(station.id);
-      }
-    } catch (error) {
-      console.error(`Error fetching station ${station.id}:`, error);
-      if (isMounted) {
+      const data = await stationsApi.getById(station.id); // Assuming getById accepts signal if needed
+      if (signal && signal.aborted) return;
+      setUpdatedStation(data);
+      setError(null);
+      // Call loadTransactions after station data is fetched
+      loadTransactions(station.id, signal); // Pass signal down
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error(`Error fetching station ${station.id}:`, error);
         setError('Failed to load station details');
       }
     } finally {
-      if (isMounted) {
-        setIsLoading(false);
-      }
+        // Only set loading false if not aborted
+        if (!signal || !signal.aborted) {
+             setIsLoading(false);
+        }
     }
-  };
+  }, [station.id, loadTransactions]); // Depends on stable station.id and loadTransactions
 
-  // Use the fetchStationData function inside the useEffect
+  // 3. WebSocket Handlers (depend on fetchStationData)
+  const handleStationUpdate: WebSocketEventHandler = useCallback((data) => {
+    console.log('Station update received in details:', data);
+    if (data.chargePointId === station.id) {
+      fetchStationData(); // Call the stable fetchStationData
+    }
+  }, [station.id, fetchStationData]);
+
+  const handleConnectorUpdate: WebSocketEventHandler = useCallback((data) => {
+    console.log('Connector update received in details:', data);
+    if (data.chargePointId === station.id) {
+      fetchStationData(); // Call the stable fetchStationData
+    }
+  }, [station.id, fetchStationData]);
+
+  const handlePaymentUpdate: WebSocketEventHandler = useCallback((data) => {
+    console.log('Payment update received in details:', data);
+    if (data.chargePointId === station.id) {
+      fetchStationData(); // Call the stable fetchStationData
+      toast.success(`Payment completed for connector ${data.connectorId}`);
+    }
+  }, [station.id, fetchStationData]);
+
+
+  // --- Effects ---
+
+  // Main useEffect for setup and cleanup
   useEffect(() => {
-    // Reset isMounted flag at the start of effect
-    isMounted = true;
+    // AbortController to cancel async tasks on unmount
+    const abortController = new AbortController();
+    const signal = abortController.signal;
 
-    if (station.id) {
-      fetchStationData();
+    let intervalId: NodeJS.Timeout | null = null;
 
-      // Connect to WebSocket
+    if (station.id && isOpen) { // Only run if modal is open and station id exists
+      fetchStationData(signal);
+
       try {
         websocketService.connect();
-
-        // Subscribe to this station
         websocketService.subscribe(station.id);
-
-        // Set up event handlers using definitions from component scope
         websocketService.on('station_update', handleStationUpdate);
         websocketService.on('connector_update', handleConnectorUpdate);
         websocketService.on('payment_update', handlePaymentUpdate);
@@ -141,55 +143,44 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
         console.error("Error setting up WebSocket in StationDetails:", err);
       }
 
-      // Set polling as fallback
-      const intervalId = setInterval(fetchStationData, 10000);
-
-      // Cleanup function
-      return () => {
-        isMounted = false; // Update isMounted flag
-        clearInterval(intervalId);
-
-        // Remove event listeners and unsubscribe
-        try {
-          websocketService.off('station_update', handleStationUpdate);
-          websocketService.off('connector_update', handleConnectorUpdate);
-          websocketService.off('payment_update', handlePaymentUpdate);
-          websocketService.unsubscribe(station.id);
-        } catch (err) {
-          // Log the specific error during cleanup
-          console.error("Error cleaning up WebSocket in StationDetails:", err);
-        }
-      };
+      intervalId = setInterval(() => fetchStationData(signal), 10000);
     }
 
+    // Cleanup function
     return () => {
-      // Set isMounted to false when component unmounts or effect re-runs
-      isMounted = false;
+      abortController.abort(); // Abort pending async operations
+      if (intervalId) clearInterval(intervalId);
+      try {
+        // Use the stable handler references for cleanup
+        websocketService.off('station_update', handleStationUpdate);
+        websocketService.off('connector_update', handleConnectorUpdate);
+        websocketService.off('payment_update', handlePaymentUpdate);
+        if (station.id) {
+          websocketService.unsubscribe(station.id);
+        }
+      } catch (err) {
+        console.error("Error cleaning up WebSocket in StationDetails:", err);
+      }
     };
-  }, [station.id]); // Keep station.id, fetchStationData (if it depends on props/state), and handlers in deps
+    // Dependency array includes everything that could trigger a re-run
+  }, [isOpen, station.id, fetchStationData, handleStationUpdate, handleConnectorUpdate, handlePaymentUpdate]);
 
-  // When tab changes, start/stop appropriate polling
+  // Effect for polling transactions based on tab index
   useEffect(() => {
-    if (!isOpen) return;
-
-    if (tabIndex === 1) {
+    let pollId: string | null = null;
+    if (isOpen && tabIndex === 1 && station.id) {
       // Transactions tab - start polling transactions
-      connectionManager.startPolling(`transactions_${station.id}`, () => fetchTransactionData(station.id));
-    } else {
-      // Other tabs - stop polling transactions
-      connectionManager.stopPolling(`transactions_${station.id}`);
-    }
-  }, [tabIndex, station.id, isOpen]);
+      pollId = `transactions_${station.id}`;
+      connectionManager.startPolling(pollId, () => loadTransactions(station.id)); // Pass station.id directly
+    } 
 
-  const fetchTransactionData = async (stationId: string) => {
-    try {
-      const stationTransactions = await transactionsApi.getByStationId(stationId);
-      setTransactions(stationTransactions);
-    } catch (error) {
-      console.error(`Error fetching transactions for station ${stationId}:`, error);
-      toast.error('Failed to load transaction data. Please try again.');
+    // Cleanup function for this effect
+    return () => {
+        if (pollId) {
+             connectionManager.stopPolling(pollId);
+        }
     }
-  };
+  }, [tabIndex, station.id, isOpen, loadTransactions]); // Depend on tabIndex, isOpen, station.id, and loadTransactions
 
   const formatDate = (dateString: string) => {
     if (!dateString) return 'N/A';
@@ -319,8 +310,8 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
     toast.success("Payment successful. Charging session has started.");
 
     // Request immediate data refresh with accelerated polling temporarily
-    connectionManager.startPolling(`station_${station.id}`, () => fetchStationData(station.id));
-    connectionManager.startPolling(`transactions_${station.id}`, () => fetchTransactionData(station.id));
+    connectionManager.startPolling(`station_${station.id}`, () => fetchStationData(new AbortController().signal));
+    connectionManager.startPolling(`transactions_${station.id}`, () => loadTransactions(station.id, new AbortController().signal));
   };
 
   const handleStopCharging = async (connectorId: string) => {
@@ -334,8 +325,8 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
       toast.success(`Stop command sent for connector ${connectorId}. Station will update shortly.`);
 
       // Optionally trigger a slightly faster poll temporarily after sending command
-      fetchStationData(); 
-      fetchTransactionData(updatedStation.id);
+      fetchStationData(new AbortController().signal);
+      loadTransactions(updatedStation.id, new AbortController().signal);
 
     } catch (error) {
       console.error(`Error stopping charging on connector ${connectorId}:`, error);
@@ -344,7 +335,7 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
   };
 
   const handleModalClose = () => {
-    // Clean up polling when modal closes
+    // Stop polling when modal closes (assuming connectionManager is stable)
     connectionManager.stopPolling(`station_${station.id}`);
     connectionManager.stopPolling(`transactions_${station.id}`);
     onClose();
@@ -352,44 +343,43 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={handleModalClose} size="xl" scrollBehavior="inside">
+      <Modal isOpen={isOpen} onClose={handleModalClose} size="3xl" scrollBehavior="inside">
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Station {updatedStation.id}</ModalHeader>
           <ModalCloseButton />
-          <ModalBody>
-            <Box mb={6}>
-              <HStack spacing={4} mb={3}>
-                <Text fontWeight="bold">Status:</Text>
+          <ModalBody pb={6}>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mb={4}>
+              <HStack>
+                <Text fontWeight="bold" minW="120px">Status:</Text>
                 {getStatusBadge(updatedStation.status || 'Unknown')}
               </HStack>
-
-              <HStack spacing={4} mb={3}>
-                <Text fontWeight="bold">Model:</Text>
-                <Text>{updatedStation.model}</Text>
-                <Text fontWeight="bold">Vendor:</Text>
-                <Text>{updatedStation.vendor}</Text>
+              <HStack>
+                <Text fontWeight="bold" minW="120px">Vendor:</Text>
+                <Text>{updatedStation.vendor || 'N/A'}</Text>
               </HStack>
-
-              <HStack spacing={4} mb={3}>
-                <Text fontWeight="bold">Last Heartbeat:</Text>
-                <Text>{formatDate(updatedStation.lastHeartbeat || '')}</Text>
+              <HStack>
+                 <Text fontWeight="bold" minW="120px">Model:</Text>
+                 <Text>{updatedStation.model || 'N/A'}</Text>
               </HStack>
+              <HStack>
+                <Text fontWeight="bold" minW="120px">Firmware:</Text>
+                <Text>{updatedStation.firmwareVersion || 'N/A'}</Text>
+                {updatedStation.updateAvailable && (
+                    <Badge colorScheme="purple" ml={2}>Update Available</Badge>
+                )}
+              </HStack>
+               <HStack>
+                 <Text fontWeight="bold" minW="120px">Last Heartbeat:</Text>
+                 <Text>{formatDate(updatedStation.lastHeartbeat || '')}</Text>
+               </HStack>
+            </SimpleGrid>
 
-              {updatedStation.firmwareVersion && (
-                <HStack spacing={4} mb={3}>
-                  <Text fontWeight="bold">Firmware:</Text>
-                  <Text>{updatedStation.firmwareVersion}</Text>
-                  {updatedStation.updateAvailable && (
-                    <Badge colorScheme="purple">Update Available</Badge>
-                  )}
-                </HStack>
-              )}
+            <Divider my={4} />
 
-              <Divider my={4} />
-
-              <Heading size="sm" mb={3}>Connectors</Heading>
-              <Table size="sm" variant="simple">
+            <Heading size="sm" mb={3}>Connectors</Heading>
+            <TableContainer>
+              <Table size="sm" variant="striped">
                 <Thead>
                   <Tr>
                     <Th>ID</Th>
@@ -402,7 +392,7 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
                 </Thead>
                 <Tbody>
                   {Array.isArray(updatedStation.connectors) && updatedStation.connectors.map((connector, idx) => (
-                    <Tr key={idx}>
+                    <Tr key={connector.id || idx}>
                       <Td>{connector.id}</Td>
                       <Td>{connector.type || 'Unknown'}</Td>
                       <Td>
@@ -411,81 +401,93 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
                       <Td>{getStatusBadge(connector.status || 'Unknown')}</Td>
                       <Td>
                         {connector.meterValue && typeof connector.meterValue === 'object' ? (
-                          <Text>
-                            {connector.meterValue.value !== undefined && connector.meterValue.value !== null ?
-                              (typeof connector.meterValue.value === 'object' ?
-                                JSON.stringify(connector.meterValue.value) :
-                                String(connector.meterValue.value))
-                              : '0'}
-                            {' '}{typeof connector.meterValue.unit === 'string' ? connector.meterValue.unit : 'Wh'}
+                          <VStack align="start" spacing={0}>
+                             <Text>
+                              {connector.meterValue.value !== undefined && connector.meterValue.value !== null ?
+                                (typeof connector.meterValue.value === 'number' ? 
+                                    connector.meterValue.value.toFixed(2) :
+                                    String(connector.meterValue.value)) 
+                                : '0.00'}
+                              {' '}{typeof connector.meterValue.unit === 'string' ? connector.meterValue.unit : 'Wh'}
+                            </Text>
                             {connector.meterValue.timestamp && typeof connector.meterValue.timestamp === 'string' && (
-                              <Text as="span" fontSize="xs" color="gray.500" ml={1}>
+                              <Text fontSize="xs" color="gray.500">
                                 ({formatDate(connector.meterValue.timestamp)})
                               </Text>
                             )}
-                          </Text>
+                          </VStack>
                         ) : (
                           <Text color="gray.500">No data</Text>
                         )}
                       </Td>
                       <Td>
-                        {connector.status === 'Available' && (
-                          <Text fontSize="sm" color="gray.500">
-                            Plugged Out
-                          </Text>
-                        )}
-                        {connector.status === 'Preparing' && (
-                          <Button
-                            size="sm"
-                            colorScheme="green"
-                            onClick={() => handleStartCharging(connector.id)}
-                          >
-                            Pay Now
-                          </Button>
-                        )}
-                        {connector.status === 'Charging' && (
-                          <Button
-                            size="sm"
-                            colorScheme="red"
-                            onClick={() => handleStopCharging(connector.id)}
-                          >
-                            Stop
-                          </Button>
-                        )}
-                        {connector.status === 'Faulted' && (
-                          <Button
-                            size="sm"
-                            colorScheme="orange"
-                            onClick={() => {
-                              toast.info(`Attempting to reset connector ${connector.id}`);
-                            }}
-                          >
-                            Reset
-                          </Button>
-                        )}
-                        {connector.status !== 'Available' &&
-                         connector.status !== 'Charging' &&
-                         connector.status !== 'Faulted' &&
-                         connector.status !== 'Preparing' && (
-                          <Button size="sm" isDisabled>
-                            Unavailable
-                          </Button>
-                        )}
+                        <Flex minHeight="32px" alignItems="center">
+                          {connector.status === 'Available' && (
+                            <Text fontSize="sm" color="gray.500">
+                              Plugged Out
+                            </Text>
+                          )}
+                          {connector.status === 'Preparing' && (
+                            <Button
+                              size="sm"
+                              colorScheme="green"
+                              onClick={() => handleStartCharging(connector.id)}
+                              variant="outline"
+                            >
+                              Pay Now
+                            </Button>
+                          )}
+                          {connector.status === 'Charging' && (
+                            <Button
+                              size="sm"
+                              colorScheme="red"
+                              onClick={() => handleStopCharging(connector.id)}
+                              variant="outline"
+                            >
+                              Stop
+                            </Button>
+                          )}
+                          {connector.status === 'Faulted' && (
+                            <Button
+                              size="sm"
+                              colorScheme="orange"
+                              onClick={() => {
+                                toast.info(`Reset command not implemented for connector ${connector.id}`);
+                              }}
+                              variant="outline"
+                            >
+                              Reset
+                            </Button>
+                          )}
+                           {connector.status === 'Finishing' && (
+                            <Button size="sm" isDisabled>
+                              Completed
+                            </Button>
+                          )}
+                          { !['Available', 'Preparing', 'Charging', 'Faulted', 'Finishing'].includes(connector.status || '') && (
+                            <Button size="sm" isDisabled>
+                              {connector.status || 'Unavailable'}
+                            </Button>
+                          )}
+                        </Flex>
                       </Td>
                     </Tr>
                   ))}
                 </Tbody>
               </Table>
-            </Box>
+            </TableContainer>
+          </ModalBody>
 
-            <Tabs
+          <ModalBody pt={0} pb={4}>
+             <Tabs
               isFitted
               variant="enclosed"
               colorScheme="blue"
               index={tabIndex}
               onChange={setTabIndex}
+              mt={4}
             >
-              <TabList mb="1em">
+              <TabList>
                 <Tab>Actions</Tab>
                 <Tab>Transactions</Tab>
                 <Tab>Logs</Tab>
@@ -531,30 +533,32 @@ const StationDetails: React.FC<StationDetailsProps> = ({ station, isOpen, onClos
                     </Flex>
                   ) : (
                     transactions.length > 0 ? (
-                      <Table size="sm" variant="simple">
-                        <Thead>
-                          <Tr>
-                            <Th>ID</Th>
-                            <Th>Start Time</Th>
-                            <Th>End Time</Th>
-                            <Th>Status</Th>
-                            <Th>Energy</Th>
-                            <Th>Cost</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {transactions.map(tx => (
-                            <Tr key={tx.id}>
-                              <Td>{tx.id}</Td>
-                              <Td>{formatDate(tx.startTime)}</Td>
-                              <Td>{tx.endTime ? formatDate(tx.endTime) : '—'}</Td>
-                              <Td>{getStatusBadge(tx.status)}</Td>
-                              <Td>{formatEnergyValue(tx.consumedEnergy)}</Td>
-                              <Td>{formatCurrencyValue(tx.amount)}</Td>
+                      <TableContainer>
+                        <Table size="sm" variant="striped">
+                          <Thead>
+                            <Tr>
+                              <Th>ID</Th>
+                              <Th>Start Time</Th>
+                              <Th>End Time</Th>
+                              <Th>Status</Th>
+                              <Th>Energy</Th>
+                              <Th>Cost</Th>
                             </Tr>
-                          ))}
-                        </Tbody>
-                      </Table>
+                          </Thead>
+                          <Tbody>
+                            {transactions.map(tx => (
+                              <Tr key={tx.id}>
+                                <Td>{tx.id}</Td>
+                                <Td>{formatDate(tx.startTime)}</Td>
+                                <Td>{tx.endTime ? formatDate(tx.endTime) : '—'}</Td>
+                                <Td>{getStatusBadge(tx.status)}</Td>
+                                <Td>{formatEnergyValue(tx.consumedEnergy)}</Td>
+                                <Td>{formatCurrencyValue(tx.amount)}</Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      </TableContainer>
                     ) : (
                       <Text color="gray.500" textAlign="center" py={8}>
                         No transactions found for this station

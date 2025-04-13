@@ -162,8 +162,8 @@ app.post('/api/stations/:stationId/connectors/:connectorId/stop-charging', async
     if (result.success) {
       res.status(200).json({ message: 'Stop command initiated successfully.' });
     } else {
-      // Use 409 Conflict if no active transaction, 500 otherwise?
-      const statusCode = result.message?.includes('No active transaction') ? 409 : 500;
+      // Use 409 if no active transaction, 400 for other logical failures (like rejection)
+      const statusCode = result.message?.includes('No active transaction') ? 409 : 400;
       res.status(statusCode).json({ error: result.message || 'Failed to initiate stop command.' });
     }
   } catch (error) {

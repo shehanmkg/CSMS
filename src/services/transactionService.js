@@ -213,12 +213,23 @@ function getAllTransactions() {
  * @returns {object | null} The active transaction object or null if none found
  */
 function getActiveTransactionByConnector(chargePointId, connectorId) {
+  logger.debug('[transactionService] Searching for active transaction', { chargePointId, connectorId });
   for (const transaction of transactions.values()) {
     // Check for common active/ongoing statuses
     const isActive = transaction.status === 'InProgress' || 
-                     transaction.status === 'Charging' || 
-                     !transaction.endTime; // Transactions without an end time are likely active
-                     
+                     transaction.status === 'Charging' ||
+                     (transaction.status !== 'Completed' && transaction.status !== 'Rejected' && !transaction.endTime);
+    
+    logger.debug('[transactionService] Checking transaction', { 
+        txId: transaction.transactionId, 
+        txCpId: transaction.chargePointId, 
+        txConnId: transaction.connectorId,
+        txStatus: transaction.status,
+        txEndTime: transaction.endTime,
+        criteriaMet: (transaction.chargePointId === chargePointId && transaction.connectorId === connectorId),
+        isActiveCheck: isActive
+    });
+
     if (transaction.chargePointId === chargePointId && 
         transaction.connectorId === connectorId && 
         isActive) {

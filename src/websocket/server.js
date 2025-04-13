@@ -50,14 +50,24 @@ class WebSocketServer {
     setupServer() {
         // Configure WebSocket server options
         const wsOptions = {
-            handleProtocols: (protocols) => {
-                logger.debug('Protocol negotiation', { protocols });
+            handleProtocols: (protocols, request) => {
+                // protocols is a Set in newer 'ws' versions
+                logger.debug('Attempting protocol negotiation', { 
+                    protocols: Array.from(protocols), // Log offered protocols
+                    chargePointId: url.parse(request.url).pathname.split('/').pop() || 'unknown'
+                });
 
-                // Just accept the first protocol
-                if (protocols && protocols.length > 0) {
-                    return protocols[0];
+                // Check if 'ocpp1.6' is offered
+                if (protocols.has('ocpp1.6')) {
+                    logger.info('Accepted ocpp1.6 subprotocol.');
+                    return 'ocpp1.6'; // Accept specifically ocpp1.6
                 }
-                return true;
+                
+                // If ocpp1.6 is not offered, reject the connection
+                logger.warn('Rejected connection: ocpp1.6 subprotocol not offered.', { 
+                    offered: Array.from(protocols) 
+                });
+                return false; // Explicitly reject
             },
             // Always use noServer mode since we're handling upgrades manually
             noServer: true

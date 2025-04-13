@@ -197,6 +197,7 @@ function updateChargePointData(chargePointId, action, payload) {
         break;
         
       case 'MeterValues':
+        logger.debug('[messageHandler] Received MeterValues payload:', { chargePointId, payload });
         // Process each meter value in the MeterValues message
         if (payload.meterValue && Array.isArray(payload.meterValue)) {
           // Find energy readings in the meter values
@@ -238,6 +239,7 @@ function updateChargePointData(chargePointId, action, payload) {
               
               // Then update with all collected readings
               if (energyReading) {
+                logger.debug('[messageHandler] Extracted readings, calling updateChargePointMeterValue', { chargePointId, connectorId: payload.connectorId, energyReading, additionalReadings });
                 stationService.updateChargePointMeterValue(
                   chargePointId,
                   payload.connectorId,

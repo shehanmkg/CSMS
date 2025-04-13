@@ -44,13 +44,18 @@ function updateChargePoint(chargePointId, data) {
   // Store updated data
   chargePoints.set(chargePointId, updatedData);
   
-  logger.debug('Updated charge point data', { 
-    chargePointId, 
-    updatedFields: Object.keys(data) 
+  logger.debug('[stationService] updateChargePoint: Stored updated data', { // Log after storing
+    chargePointId,
+    updatedFields: Object.keys(data)
   });
 
   // Broadcast to frontend clients if available
   if (global.broadcastToFrontend) {
+    logger.debug('[stationService] updateChargePoint: Broadcasting update to frontend...', { // Log before broadcasting
+        event: 'station_update', 
+        chargePointId, 
+        keys: Object.keys(data)
+    });
     global.broadcastToFrontend('station_update', {
       chargePointId,
       updatedFields: Object.keys(data),
@@ -215,6 +220,13 @@ function updateChargePointMeterValue(chargePointId, connectorId, meterValue, add
     throw new Error('connectorId is required');
   }
   
+  logger.debug('[stationService] updateChargePointMeterValue called', { // Log entry
+    chargePointId,
+    connectorId,
+    meterValue,
+    additionalValues
+  });
+
   // Get existing data or initialize a new object
   const existingData = chargePoints.get(chargePointId) || {};
   
@@ -238,7 +250,7 @@ function updateChargePointMeterValue(chargePointId, connectorId, meterValue, add
   // Update charge point data with connector information
   updateChargePoint(chargePointId, { connectors });
   
-  logger.debug('Updated charge point meter value', {
+  logger.debug('[stationService] Finished updating charge point meter value', { // Log exit
     chargePointId,
     connectorId,
     value: meterValue.value,
@@ -263,14 +275,26 @@ async function stopTransaction(chargePointId, connectorId) {
 
   try {
     // 1. Find the active transaction for this connector
+    logger.debug('[stopTransaction] Attempting to find active transaction...', { chargePointId, connectorId });
     const activeTransaction = transactionService.getActiveTransactionByConnector(chargePointId, connectorId);
+    logger.debug('[stopTransaction] Result of getActiveTransactionByConnector:', { activeTransaction });
 
     if (!activeTransaction) {
       logger.warn('No active transaction found to stop', { chargePointId, connectorId });
       return { success: false, message: 'No active transaction found on this connector.' };
     }
 
+    // Check if transactionId exists and is valid before proceeding
+    if (!activeTransaction.transactionId) {
+        logger.error('[stopTransaction] Found active transaction but it has no transactionId!', { activeTransaction });
+        return { success: false, message: 'Active transaction is missing an ID.' };
+    }
+
     // 2. Trigger the OCPP RemoteStopTransaction command
+    logger.debug('[stopTransaction] Active transaction found. Attempting to send RemoteStopTransaction.', {
+      chargePointId,
+      transactionId: activeTransaction.transactionId
+    });
     // Use the injected WebSocketServer instance
     if (!wsServerInstance) {
       logger.error('WebSocketServer instance not initialized in stationService. Cannot stop transaction.');
@@ -283,12 +307,15 @@ async function stopTransaction(chargePointId, connectorId) {
         // This callback is executed when the charge point sends back a CallResult
         resolve(responsePayload); // Resolve the promise with the response payload
       });
+      logger.debug('[stopTransaction] remoteStopTransaction call initiated. Waiting for callback or immediate failure...', { success });
+
       // If sendRequest itself fails immediately (e.g., station not connected)
       if (!success) {
          reject(new Error('Failed to send RemoteStopTransaction command (station likely disconnected)'));
       }
       // TODO: Add a timeout for the promise in case the station never responds?
     });
+    logger.debug('[stopTransaction] Promise for RemoteStopTransaction resolved/rejected. Result:', { result });
 
     if (result && result.status === 'Accepted') {
       logger.info('RemoteStopTransaction accepted by charge point', { chargePointId, transactionId: activeTransaction.transactionId });
