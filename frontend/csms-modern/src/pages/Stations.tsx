@@ -48,6 +48,23 @@ const Stations: React.FC = () => {
 
   const isDesktop = useBreakpointValue({ base: false, md: true });
 
+  // Define WebSocket handlers in the component scope
+  const handleStationUpdate: WebSocketEventHandler = (data) => {
+    console.log('Station update received:', data);
+    fetchStationsData(); // Refresh data when updates come in
+  };
+
+  const handleConnectorUpdate: WebSocketEventHandler = (data) => {
+    console.log('Connector update received:', data);
+    fetchStationsData(); // Refresh data when updates come in
+  };
+
+  const handlePaymentUpdate: WebSocketEventHandler = (data) => {
+    console.log('Payment update received:', data);
+    fetchStationsData(); // Refresh data when updates come in
+    toast.success(`Payment completed for station ${data.chargePointId}`);
+  };
+
   // Define fetchStationsData at component level scope
   const fetchStationsData = async () => {
     setIsLoading(true);
@@ -71,28 +88,12 @@ const Stations: React.FC = () => {
     // Connect WebSocket and set up event handlers
     try {
       websocketService.connect();
-      
-      const handleStationUpdate: WebSocketEventHandler = (data) => {
-        console.log('Station update received:', data);
-        fetchStationsData(); // Refresh data when updates come in
-      };
-      
-      const handleConnectorUpdate: WebSocketEventHandler = (data) => {
-        console.log('Connector update received:', data);
-        fetchStationsData(); // Refresh data when updates come in
-      };
-      
-      const handlePaymentUpdate: WebSocketEventHandler = (data) => {
-        console.log('Payment update received:', data);
-        fetchStationsData(); // Refresh data when updates come in
-        toast.success(`Payment completed for station ${data.chargePointId}`);
-      };
-      
-      // Register event handlers
+
+      // Register event handlers using the definitions above
       websocketService.on('station_update', handleStationUpdate);
       websocketService.on('connector_update', handleConnectorUpdate);
       websocketService.on('payment_update', handlePaymentUpdate);
-      
+
       // Subscribe to all stations
       stations.forEach(station => {
         websocketService.subscribe(station.id);
@@ -108,13 +109,13 @@ const Stations: React.FC = () => {
     // Clean up
     return () => {
       clearInterval(intervalId);
-      
+
       try {
         // Clean up WebSocket handlers
         websocketService.off('station_update', handleStationUpdate);
         websocketService.off('connector_update', handleConnectorUpdate);
         websocketService.off('payment_update', handlePaymentUpdate);
-        
+
         // Unsubscribe from all stations
         stations.forEach(station => {
           websocketService.unsubscribe(station.id);
@@ -123,7 +124,7 @@ const Stations: React.FC = () => {
         console.error("Error cleaning up WebSocket handlers:", err);
       }
     };
-  }, []);
+  }, []); // Dependencies removed as handlers are stable
 
   // Add a useEffect to handle station subscription updates when stations change
   useEffect(() => {
@@ -135,11 +136,11 @@ const Stations: React.FC = () => {
 
   const formatHeartbeatTime = (timestamp: string) => {
     if (!timestamp) return 'N/A';
-    
+
     const heartbeatTime = new Date(timestamp);
     const now = new Date();
     const diffInSeconds = Math.floor((now.getTime() - heartbeatTime.getTime()) / 1000);
-    
+
     if (diffInSeconds < 60) {
       return 'Just now';
     } else if (diffInSeconds < 3600) {
@@ -151,13 +152,24 @@ const Stations: React.FC = () => {
     }
   };
 
+  // Helper function to safely format power, handling potential object structure
+  const formatPowerValue = (power: number | { value: number; unit?: string } | null | undefined): string => {
+    if (typeof power === 'object' && power !== null && 'value' in power && typeof power.value === 'number') {
+      return `${power.value} ${power.unit || 'kW'}`;
+    }
+    if (typeof power === 'number') {
+      return `${power} kW`;
+    }
+    return '0 kW'; // Default or fallback value
+  };
+
   const getStatusBadge = (status: string) => {
     let colorScheme = 'gray';
-    
+
     if (!status) {
       return <Badge colorScheme="gray">Unknown</Badge>;
     }
-    
+
     switch (status.toLowerCase()) {
       case 'available':
         colorScheme = 'green';
@@ -174,10 +186,13 @@ const Stations: React.FC = () => {
       case 'reserved':
         colorScheme = 'purple';
         break;
+      case 'finishing':
+        colorScheme = 'green';
+        return <Badge colorScheme={colorScheme}>Completed</Badge>;
       default:
         colorScheme = 'gray';
     }
-    
+
     return <Badge colorScheme={colorScheme}>{status}</Badge>;
   };
 
@@ -196,7 +211,7 @@ const Stations: React.FC = () => {
   const handleManualRefresh = () => {
     setIsLoading(true);
     fetchStationsData();
-    
+
     // Trigger a quicker polling temporarily
     try {
       connectionManager.startPolling('stations', fetchStationsData);
@@ -207,15 +222,15 @@ const Stations: React.FC = () => {
 
   // Filter stations based on search term and status filter
   const filteredStations = stations.filter(station => {
-    const matchesSearch = 
-      station.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    const matchesSearch =
+      station.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (station.vendor && station.vendor.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (station.model && station.model.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    const matchesStatus = 
-      statusFilter === 'all' || 
+
+    const matchesStatus =
+      statusFilter === 'all' ||
       (station.status && station.status.toLowerCase() === statusFilter.toLowerCase());
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -232,7 +247,7 @@ const Stations: React.FC = () => {
         </Flex>
       );
     }
-    
+
     if (error) {
       return (
         <Box textAlign="center" p={6} color="red.500">
@@ -241,7 +256,7 @@ const Stations: React.FC = () => {
         </Box>
       );
     }
-    
+
     if (filteredStations.length === 0) {
       return (
         <Box textAlign="center" p={6}>
@@ -249,7 +264,7 @@ const Stations: React.FC = () => {
         </Box>
       );
     }
-    
+
     return (
       <SimpleGrid columns={{ base: 1, sm: 2, lg: 3 }} spacing={6}>
         {filteredStations.map(station => (
@@ -263,7 +278,7 @@ const Stations: React.FC = () => {
                 {station.vendor || 'Unknown'} {station.model || ''}
               </Text>
             </CardHeader>
-            
+
             <CardBody pt={0}>
               <VStack align="stretch" spacing={3}>
                 <Box>
@@ -275,19 +290,25 @@ const Stations: React.FC = () => {
                       <HStack key={connector.id || idx} mb={2} spacing={3} p={2} borderWidth="1px" borderRadius="md">
                         <Badge>{connector.id}</Badge>
                         <Text fontSize="sm">{connector.type || 'Type 2'}</Text>
-                        <Text fontSize="sm">{connector.power || 0} kW</Text>
+                        <Text fontSize="sm">
+                          {formatPowerValue(connector.power)}
+                        </Text>
                         <Badge colorScheme={
-                          connector.status === 'Available' ? 'green' : 
-                          connector.status === 'Charging' ? 'blue' : 
-                          connector.status === 'Preparing' ? 'purple' : 
+                          connector.status === 'Available' ? 'green' :
+                          connector.status === 'Charging' ? 'blue' :
+                          connector.status === 'Preparing' ? 'purple' :
                           connector.status === 'Faulted' ? 'red' : 'gray'
                         }>
                           {connector.status || 'Unknown'}
                         </Badge>
                         {connector.meterValue && typeof connector.meterValue === 'object' && (
                           <Text fontSize="xs">
-                            {connector.meterValue.value !== undefined && connector.meterValue.value !== null ? connector.meterValue.value : 0} 
-                            {' '}{connector.meterValue.unit || 'Wh'}
+                            {connector.meterValue.value !== undefined && connector.meterValue.value !== null ?
+                              (typeof connector.meterValue.value === 'object' ?
+                                JSON.stringify(connector.meterValue.value) :
+                                String(connector.meterValue.value))
+                              : '0'}
+                            {' '}{typeof connector.meterValue.unit === 'string' ? connector.meterValue.unit : 'Wh'}
                           </Text>
                         )}
                         {connector.status === 'Available' && (
@@ -296,8 +317,8 @@ const Stations: React.FC = () => {
                           </Text>
                         )}
                         {connector.status === 'Preparing' && (
-                          <Button 
-                            size="xs" 
+                          <Button
+                            size="xs"
                             colorScheme="green"
                             variant="outline"
                             onClick={() => handleChargeButton(station)}
@@ -311,22 +332,22 @@ const Stations: React.FC = () => {
                     <Text fontSize="sm" color="gray.500">No connectors available</Text>
                   )}
                 </Box>
-                
+
                 <Text fontSize="sm">
                   Last seen: {station.lastHeartbeat ? formatHeartbeatTime(station.lastHeartbeat) : 'N/A'}
                 </Text>
-                
+
                 <HStack pt={2} justify="flex-end" spacing={2}>
-                  <Button 
-                    size="sm" 
-                    colorScheme="blue" 
+                  <Button
+                    size="sm"
+                    colorScheme="blue"
                     variant="outline"
                     onClick={() => handleViewDetails(station)}
                   >
                     Details
                   </Button>
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     colorScheme="blue"
                     isDisabled={!hasPreparingConnectors(station)}
                     onClick={() => handleChargeButton(station)}
@@ -350,7 +371,7 @@ const Stations: React.FC = () => {
         </Flex>
       );
     }
-    
+
     if (error) {
       return (
         <Box textAlign="center" p={6} color="red.500">
@@ -359,7 +380,7 @@ const Stations: React.FC = () => {
         </Box>
       );
     }
-    
+
     if (filteredStations.length === 0) {
       return (
         <Box textAlign="center" p={6}>
@@ -367,7 +388,7 @@ const Stations: React.FC = () => {
         </Box>
       );
     }
-    
+
     return (
       <Box overflowX="auto">
         <Table variant="simple">
@@ -391,24 +412,28 @@ const Stations: React.FC = () => {
                   <Td>{station.status ? getStatusBadge(station.status) : getStatusBadge('Unknown')}</Td>
                   <Td>
                     <VStack align="start" spacing={1}>
-                      {station.connectors && Array.isArray(station.connectors) && station.connectors.length > 0 ? 
+                      {station.connectors && Array.isArray(station.connectors) && station.connectors.length > 0 ?
                         station.connectors.map((connector, idx) => (
                           <HStack key={connector.id || idx} spacing={2} mb={2} p={1} borderWidth="1px" borderRadius="sm">
-                            <Badge 
+                            <Badge
                               colorScheme={
-                                connector.status === 'Available' ? 'green' : 
-                                connector.status === 'Charging' ? 'blue' : 
-                                connector.status === 'Preparing' ? 'purple' : 
+                                connector.status === 'Available' ? 'green' :
+                                connector.status === 'Charging' ? 'blue' :
+                                connector.status === 'Preparing' ? 'purple' :
                                 connector.status === 'Faulted' ? 'red' : 'gray'
                               }
                             >
                               {connector.id}
                             </Badge>
-                            <Text fontSize="xs">{connector.type}, {connector.power} kW</Text>
+                            <Text fontSize="xs">{connector.type}, {formatPowerValue(connector.power)}</Text>
                             {connector.meterValue && typeof connector.meterValue === 'object' && (
                               <Text fontSize="xs">
-                                {connector.meterValue.value !== undefined && connector.meterValue.value !== null ? connector.meterValue.value : 0} 
-                                {' '}{connector.meterValue.unit || 'Wh'}
+                                {connector.meterValue.value !== undefined && connector.meterValue.value !== null ?
+                                  (typeof connector.meterValue.value === 'object' ?
+                                    JSON.stringify(connector.meterValue.value) :
+                                    String(connector.meterValue.value))
+                                  : '0'}
+                                {' '}{typeof connector.meterValue.unit === 'string' ? connector.meterValue.unit : 'Wh'}
                               </Text>
                             )}
                             {connector.status === 'Available' && (
@@ -417,8 +442,8 @@ const Stations: React.FC = () => {
                               </Text>
                             )}
                             {connector.status === 'Preparing' && (
-                              <Button 
-                                size="xs" 
+                              <Button
+                                size="xs"
                                 colorScheme="green"
                                 variant="outline"
                                 onClick={() => handleChargeButton(station)}
@@ -427,7 +452,7 @@ const Stations: React.FC = () => {
                               </Button>
                             )}
                           </HStack>
-                        )) : 
+                        )) :
                         <Text fontSize="xs">No connectors</Text>
                       }
                     </VStack>
@@ -435,16 +460,16 @@ const Stations: React.FC = () => {
                   <Td>{station.lastHeartbeat ? formatHeartbeatTime(station.lastHeartbeat) : 'N/A'}</Td>
                   <Td>
                     <HStack spacing={2}>
-                      <Button 
-                        size="sm" 
-                        colorScheme="blue" 
+                      <Button
+                        size="sm"
+                        colorScheme="blue"
                         variant="outline"
                         onClick={() => handleViewDetails(station)}
                       >
                         Details
                       </Button>
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         colorScheme="blue"
                         isDisabled={!hasPreparingConnectors(station)}
                         onClick={() => handleChargeButton(station)}
@@ -464,23 +489,23 @@ const Stations: React.FC = () => {
 
   return (
     <Box>
-      <Flex 
-        mb={6} 
-        justifyContent="space-between" 
+      <Flex
+        mb={6}
+        justifyContent="space-between"
         alignItems="center"
         direction={{ base: 'column', md: 'row' }}
         gap={4}
       >
         <Heading size="lg">Charging Stations</Heading>
-        <Button 
-          leftIcon={<AddIcon />} 
-          colorScheme="blue" 
+        <Button
+          leftIcon={<AddIcon />}
+          colorScheme="blue"
           onClick={onAddStationOpen}
         >
           Add Station
         </Button>
       </Flex>
-      
+
       <Box mb={6} p={4} bg="blue.50" borderRadius="md">
         <Heading size="sm" mb={2} color="blue.700">How to charge your vehicle:</Heading>
         <OrderedList spacing={1} pl={5} color="blue.700">
@@ -490,25 +515,25 @@ const Stations: React.FC = () => {
           <ListItem>After payment, charging will begin automatically (status will change to "Charging")</ListItem>
         </OrderedList>
       </Box>
-      
-      <Stack 
-        direction={{ base: 'column', md: 'row' }} 
-        mb={6} 
+
+      <Stack
+        direction={{ base: 'column', md: 'row' }}
+        mb={6}
         spacing={4}
       >
         <InputGroup maxW={{ base: '100%', md: '300px' }}>
           <InputLeftElement pointerEvents="none">
             <SearchIcon color="gray.300" />
           </InputLeftElement>
-          <Input 
-            placeholder="Search stations..." 
+          <Input
+            placeholder="Search stations..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </InputGroup>
-        
-        <Select 
-          maxW={{ base: '100%', md: '200px' }} 
+
+        <Select
+          maxW={{ base: '100%', md: '200px' }}
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -518,9 +543,9 @@ const Stations: React.FC = () => {
           <option value="faulted">Faulted</option>
           <option value="unavailable">Unavailable</option>
         </Select>
-        
-        <Button 
-          colorScheme="blue" 
+
+        <Button
+          colorScheme="blue"
           variant="outline"
           onClick={handleManualRefresh}
           isLoading={isLoading}
@@ -528,9 +553,9 @@ const Stations: React.FC = () => {
           Refresh
         </Button>
       </Stack>
-      
+
       {isDesktop ? renderStationTable() : renderStationCards()}
-      
+
       {/* Station Details Modal */}
       {isViewDetailsOpen && selectedStation && (
         <StationDetails
@@ -540,7 +565,7 @@ const Stations: React.FC = () => {
           initialTabIndex={initialTabIndex}
         />
       )}
-      
+
       {/* Add Station Modal will be implemented later */}
     </Box>
   );

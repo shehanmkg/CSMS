@@ -71,7 +71,7 @@ export interface DashboardStats {
 // Custom error class for API errors
 export class ApiError extends Error {
   status: number;
-  
+
   constructor(message: string, status: number) {
     super(message);
     this.name = 'ApiError';
@@ -178,12 +178,12 @@ export const stationsApi = {
       return sampleStations;
     }
   },
-  
+
   async getById(id: string): Promise<ChargingStation> {
     try {
       const response = await api.get(`/stations/${id}`);
       const stationData = response.data.station;
-      
+
       // Normalize connectors for consistent handling
       if (stationData.connectors) {
         if (!Array.isArray(stationData.connectors) && typeof stationData.connectors === 'object') {
@@ -198,7 +198,7 @@ export const stationsApi = {
       } else {
         stationData.connectors = [];
       }
-      
+
       return {
         ...stationData,
         vendor: stationData.vendor || stationData.chargePointVendor || 'Unknown',
@@ -212,14 +212,32 @@ export const stationsApi = {
       return station;
     }
   },
-  
+
   updateStatus: async (id: string, status: string): Promise<void> => {
     try {
       await api.put(`/stations/${id}/status`, { status });
     } catch (error) {
       console.warn(`Mock station status update for ${id}: ${status}`, error);
     }
-  }
+  },
+
+  // Stop charging on a specific connector
+  stopCharging: async (stationId: string, connectorId: string): Promise<void> => {
+    try {
+      const response = await api.post(`/stations/${stationId}/connectors/${connectorId}/stop-charging`);
+      // Check response status if needed, but typically 200 OK means accepted
+      if (response.status !== 200) {
+        // Attempt to parse error message from backend
+        const errorData = response.data || { error: 'Failed to initiate stop command.' };
+        throw new Error(errorData.error || `Server responded with status ${response.status}`);
+      }
+      // No specific data needed on success, the backend handles the async process
+      return;
+    } catch (error: any) {
+      console.error(`API Error stopping charging for ${stationId}/${connectorId}:`, error);
+      throw new Error(error.response?.data?.error || error.message || 'Could not stop charging session');
+    }
+  },
 };
 
 export const transactionsApi = {
@@ -232,7 +250,7 @@ export const transactionsApi = {
       return sampleTransactions;
     }
   },
-  
+
   async getByStationId(stationId: string): Promise<Transaction[]> {
     try {
       const response = await api.get(`/stations/${stationId}/transactions`);
@@ -251,14 +269,14 @@ export const dashboardApi = {
       return response.data;
     } catch (error) {
       console.warn('Failed to fetch dashboard stats from API, computing from sample data', error);
-      
+
       // Compute stats from sample data
       const activeStations = sampleStations.filter(s => s.status === 'Available' || s.status === 'Charging').length;
       const totalStations = sampleStations.length;
       const activeTransactions = sampleTransactions.filter(t => !t.endTime).length;
-      
+
       const totalEnergyDelivered = sampleTransactions.reduce((sum, tx) => sum + tx.energy, 0);
-      
+
       return {
         activeStations,
         totalStations,
@@ -269,14 +287,14 @@ export const dashboardApi = {
       };
     }
   },
-  
+
   async getEnergyUsageByDay(): Promise<any[]> {
     try {
       const response = await api.get('/dashboard/energy');
       return response.data.energyData || [];
     } catch (error) {
       console.warn('Failed to fetch energy usage data from API, using sample data', error);
-      
+
       // Generate 7 days of sample data
       const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
       return days.map(day => ({
@@ -285,14 +303,14 @@ export const dashboardApi = {
       }));
     }
   },
-  
+
   async getUtilizationByHour(): Promise<any[]> {
     try {
       const response = await api.get('/dashboard/utilization');
       return response.data.utilizationData || [];
     } catch (error) {
       console.warn('Failed to fetch utilization data from API, using sample data', error);
-      
+
       // Generate hourly utilization data
       return Array.from({ length: 24 }, (_, i) => ({
         hour: `${i}:00`,
@@ -300,14 +318,14 @@ export const dashboardApi = {
       }));
     }
   },
-  
+
   async getStatusDistribution(): Promise<any[]> {
     try {
       const response = await api.get('/dashboard/status');
       return response.data.statusData || [];
     } catch (error) {
       console.warn('Failed to fetch status distribution from API, using sample data', error);
-      
+
       return [
         { status: 'Available', count: 7 },
         { status: 'Charging', count: 5 },
@@ -325,10 +343,10 @@ export const dashboardApi = {
 const processPayment = async (paymentId: string): Promise<{ success: boolean; message: string; data?: any }> => {
   try {
     const response = await api.post('/payment/complete', { paymentId });
-    
+
     // Log successful response
     console.log('Payment processing successful:', response.data);
-    
+
     return {
       success: true,
       message: 'Payment processed successfully',
@@ -337,12 +355,12 @@ const processPayment = async (paymentId: string): Promise<{ success: boolean; me
   } catch (error: any) {
     // Log detailed error information
     console.error('Payment processing failed:', error);
-    
+
     // Get error details from the response if available
-    const errorMessage = error.response?.data?.message || 
-                         error.message || 
+    const errorMessage = error.response?.data?.message ||
+                         error.message ||
                          'Unknown error occurred during payment';
-    
+
     return {
       success: false,
       message: errorMessage
@@ -355,10 +373,10 @@ export const paymentApi = {
     try {
       // Generate a payment ID with the format payment_stationId_connectorId_timestamp
       const paymentId = `payment_${stationId}_${connectorId}_${Date.now()}`;
-      
+
       // Process the payment
       const response = await processPayment(paymentId);
-      
+
       return {
         success: response.success,
         message: response.message,
@@ -389,30 +407,30 @@ class WebSocketManager {
 
   public connect(): void {
     if (this.socket?.readyState === WebSocket.OPEN || this.connecting) return;
-    
+
     this.connecting = true;
-    
+
     // Determine correct WebSocket URL based on current window location
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsURL = `${protocol}//${host.replace('5173', '9220')}/ws`;
-    
+    const wsURL = `${protocol}//${host.replace('5173', '9221')}/ws`;
+
     console.log(`Connecting to WebSocket at ${wsURL}`);
-    
+
     try {
       this.socket = new WebSocket(wsURL);
-      
+
       this.socket.onopen = () => {
         console.log('WebSocket connection established');
         this.reconnectAttempts = 0;
         this.connecting = false;
         this.emit('connection', { status: 'connected' });
       };
-      
+
       this.socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          
+
           // Handle different message types
           if (data.type && data.payload) {
             this.emit(data.type, data.payload);
@@ -424,19 +442,19 @@ class WebSocketManager {
           console.error('Error parsing WebSocket message:', error);
         }
       };
-      
+
       this.socket.onclose = (event) => {
         console.log('WebSocket connection closed', event.code, event.reason);
         this.connecting = false;
         this.emit('connection', { status: 'disconnected' });
-        
+
         // Attempt to reconnect if not explicitly closed
         if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           setTimeout(() => this.connect(), this.reconnectDelay);
         }
       };
-      
+
       this.socket.onerror = (error) => {
         console.error('WebSocket error:', error);
         this.connecting = false;
@@ -498,7 +516,7 @@ export const websocketManager = new WebSocketManager();
 // Connection manager for optimized polling
 class ConnectionManager {
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
-  
+
   // Default polling intervals in ms
   private defaultIntervals = {
     stations: 5000,       // 5 seconds for stations
@@ -510,7 +528,7 @@ class ConnectionManager {
   startPolling(resourceKey: string, callback: () => void): void {
     // Stop any existing interval for this resource
     this.stopPolling(resourceKey);
-    
+
     // Determine appropriate interval
     let interval = this.defaultIntervals.default;
     if (resourceKey === 'stations') {
@@ -520,7 +538,7 @@ class ConnectionManager {
     } else if (resourceKey.startsWith('station_')) {
       interval = this.defaultIntervals.stations;
     }
-    
+
     // If the resource is a station, also subscribe to WebSocket updates for it
     if (resourceKey.startsWith('station_')) {
       const stationId = resourceKey.replace('station_', '');
@@ -528,7 +546,7 @@ class ConnectionManager {
         websocketService.subscribe(stationId);
       }
     }
-    
+
     // Start the interval
     const intervalId = setInterval(callback, interval);
     this.pollingIntervals.set(resourceKey, intervalId);
@@ -540,7 +558,7 @@ class ConnectionManager {
     if (interval) {
       clearInterval(interval);
       this.pollingIntervals.delete(resourceKey);
-      
+
       // If the resource is a station, also unsubscribe from WebSocket updates
       if (resourceKey.startsWith('station_')) {
         const stationId = resourceKey.replace('station_', '');
@@ -561,4 +579,4 @@ class ConnectionManager {
 export const connectionManager = new ConnectionManager();
 
 // Export api instance for direct use in components if needed
-export default api; 
+export default api;

@@ -1,9 +1,9 @@
 import { toast } from 'react-toastify';
 
 // Event types
-export type WebSocketEvent = 
-  | 'station_update' 
-  | 'connector_update' 
+export type WebSocketEvent =
+  | 'station_update'
+  | 'connector_update'
   | 'payment_update';
 
 // Event handler type
@@ -34,7 +34,7 @@ class WebSocketService {
       // Determine backend URL from environment or fallback
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       let host = '';
-      
+
       // Use import.meta.env for Vite instead of process.env
       if (import.meta.env.VITE_API_URL) {
         host = import.meta.env.VITE_API_URL;
@@ -44,15 +44,19 @@ class WebSocketService {
         // Fallback for development
         host = 'localhost:3000';
       }
-      
+
       // Strip any protocol prefix if present
       if (host.startsWith('http://') || host.startsWith('https://')) {
         host = host.replace(/^https?:\/\//, '');
       }
-      
+
       // Handle port if needed
+      // If we're in development mode (localhost:5173), use the backend port
+      if (host.includes('5173')) {
+        host = host.replace('5173', '9221');
+      }
       const wsUrl = `${protocol}//${host}/ws`;
-      
+
       console.log(`Connecting to WebSocket at ${wsUrl}`);
 
       this.socket = new WebSocket(wsUrl);
@@ -93,7 +97,7 @@ class WebSocketService {
     if (!stationId) return;
 
     this.subscriptions.add(stationId);
-    
+
     if (this.isConnected && this.socket?.readyState === WebSocket.OPEN) {
       this.safelySend('subscribe', { stationId });
     }
@@ -103,7 +107,7 @@ class WebSocketService {
     if (!stationId) return;
 
     this.subscriptions.delete(stationId);
-    
+
     if (this.isConnected && this.socket?.readyState === WebSocket.OPEN) {
       this.safelySend('unsubscribe', { stationId });
     }
@@ -113,7 +117,7 @@ class WebSocketService {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, []);
     }
-    
+
     const handlers = this.eventHandlers.get(event);
     if (handlers && !handlers.includes(handler)) {
       handlers.push(handler);
@@ -122,7 +126,7 @@ class WebSocketService {
 
   public off(event: WebSocketEvent, handler: WebSocketEventHandler): void {
     if (!this.eventHandlers.has(event)) return;
-    
+
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       const index = handlers.indexOf(handler);
@@ -135,7 +139,7 @@ class WebSocketService {
   private handleOpen(event: Event): void {
     console.log('WebSocket connection established');
     this.isConnected = true;
-    
+
     // Re-subscribe to all stations
     this.subscriptions.forEach(stationId => {
       this.safelySend('subscribe', { stationId });
@@ -145,7 +149,7 @@ class WebSocketService {
   private handleMessage(event: MessageEvent): void {
     try {
       const message = JSON.parse(event.data);
-      
+
       if (message.type && this.eventHandlers.has(message.type as WebSocketEvent)) {
         const handlers = this.eventHandlers.get(message.type as WebSocketEvent);
         if (handlers) {
@@ -212,4 +216,4 @@ class WebSocketService {
 // Create a singleton instance
 const websocketService = new WebSocketService();
 
-export default websocketService; 
+export default websocketService;

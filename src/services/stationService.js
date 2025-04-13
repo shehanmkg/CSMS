@@ -1,7 +1,24 @@
 const { logger } = require('../utils/logger');
+const transactionService = require('./transactionService');
+// const WebSocketServer = require('../websocket/server'); // Remove direct require
+
+// Module variable to hold the WebSocketServer instance
+let wsServerInstance = null;
 
 // In-memory storage for charge point data
 const chargePoints = new Map();
+
+/**
+ * Initialize the station service with required dependencies.
+ * @param {object} wsInstance - The WebSocketServer instance.
+ */
+function initialize(wsInstance) {
+  if (!wsInstance) {
+    throw new Error('WebSocketServer instance is required for stationService initialization');
+  }
+  wsServerInstance = wsInstance;
+  logger.info('StationService initialized with WebSocketServer instance.');
+}
 
 /**
  * Store or update charge point data
@@ -229,6 +246,66 @@ function updateChargePointMeterValue(chargePointId, connectorId, meterValue, add
   });
 }
 
+/**
+ * Request to stop an ongoing transaction on a specific connector.
+ * 
+ * @param {string} chargePointId - ID of the charge point
+ * @param {number} connectorId - ID of the connector
+ * @returns {Promise<object>} Result of the stop request (e.g., { success: true } or { success: false, message: '...' })
+ */
+async function stopTransaction(chargePointId, connectorId) {
+  logger.info('Received request to stop transaction', { chargePointId, connectorId });
+
+  if (!chargePointId || connectorId === undefined) {
+    logger.error('Missing chargePointId or connectorId for stopTransaction');
+    throw new Error('Missing chargePointId or connectorId');
+  }
+
+  try {
+    // 1. Find the active transaction for this connector
+    const activeTransaction = transactionService.getActiveTransactionByConnector(chargePointId, connectorId);
+
+    if (!activeTransaction) {
+      logger.warn('No active transaction found to stop', { chargePointId, connectorId });
+      return { success: false, message: 'No active transaction found on this connector.' };
+    }
+
+    // 2. Trigger the OCPP RemoteStopTransaction command
+    // Use the injected WebSocketServer instance
+    if (!wsServerInstance) {
+      logger.error('WebSocketServer instance not initialized in stationService. Cannot stop transaction.');
+      throw new Error('Internal configuration error: WebSocket server not available.');
+    }
+
+    // Define a promise wrapper for the callback-based sendRequest
+    const result = await new Promise((resolve, reject) => {
+      const success = wsServerInstance.remoteStopTransaction(chargePointId, activeTransaction.transactionId, (responsePayload) => {
+        // This callback is executed when the charge point sends back a CallResult
+        resolve(responsePayload); // Resolve the promise with the response payload
+      });
+      // If sendRequest itself fails immediately (e.g., station not connected)
+      if (!success) {
+         reject(new Error('Failed to send RemoteStopTransaction command (station likely disconnected)'));
+      }
+      // TODO: Add a timeout for the promise in case the station never responds?
+    });
+
+    if (result && result.status === 'Accepted') {
+      logger.info('RemoteStopTransaction accepted by charge point', { chargePointId, transactionId: activeTransaction.transactionId });
+      // The charge point should eventually send a StopTransaction.req
+      // which will be handled elsewhere to finalize the transaction state.
+      return { success: true };
+    } else {
+      logger.error('RemoteStopTransaction rejected or failed', { chargePointId, transactionId: activeTransaction.transactionId, result });
+      return { success: false, message: `Charge point rejected stop command: ${result?.status || 'Unknown reason'}` };
+    }
+
+  } catch (error) {
+    logger.error('Error during stopTransaction process', { chargePointId, connectorId, error: error.message });
+    throw new Error(`Failed to initiate stop transaction: ${error.message}`);
+  }
+}
+
 module.exports = {
   updateChargePoint,
   getChargePoint,
@@ -237,5 +314,7 @@ module.exports = {
   handleBootNotification,
   handleStatusNotification,
   handleHeartbeat,
-  updateChargePointMeterValue
+  updateChargePointMeterValue,
+  stopTransaction,
+  initialize // Export the initialize function
 }; 

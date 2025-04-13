@@ -205,11 +205,37 @@ function getAllTransactions() {
   return Array.from(transactions.values());
 }
 
+/**
+ * Find the currently active transaction for a specific connector on a charge point.
+ * 
+ * @param {string} chargePointId - ID of the charge point
+ * @param {number} connectorId - ID of the connector
+ * @returns {object | null} The active transaction object or null if none found
+ */
+function getActiveTransactionByConnector(chargePointId, connectorId) {
+  for (const transaction of transactions.values()) {
+    // Check for common active/ongoing statuses
+    const isActive = transaction.status === 'InProgress' || 
+                     transaction.status === 'Charging' || 
+                     !transaction.endTime; // Transactions without an end time are likely active
+                     
+    if (transaction.chargePointId === chargePointId && 
+        transaction.connectorId === connectorId && 
+        isActive) {
+      logger.debug('Found active transaction for connector', { chargePointId, connectorId, transactionId: transaction.transactionId });
+      return transaction;
+    }
+  }
+  logger.debug('No active transaction found for connector', { chargePointId, connectorId });
+  return null;
+}
+
 module.exports = {
   startTransaction,
   stopTransaction,
   getTransaction,
   getTransactionsByChargePoint,
   addMeterValue,
-  getAllTransactions
+  getAllTransactions,
+  getActiveTransactionByConnector
 }; 

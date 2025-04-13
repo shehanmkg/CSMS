@@ -43,7 +43,7 @@ app.get('/api/stations', (req, res) => {
     const stations = stationService.getAllChargePoints();
     res.json({
       count: stations.length,
-      stations 
+      stations
     });
   } catch (error) {
     logger.error('Error getting stations', { error: error.message });
@@ -56,21 +56,21 @@ app.get('/api/stations/:stationId', (req, res) => {
   try {
     const { stationId } = req.params;
     const station = stationService.getChargePoint(stationId);
-    
+
     if (!station) {
       return res.status(404).json({ error: 'Station not found' });
     }
-    
-    res.json({ 
+
+    res.json({
       station: {
         id: stationId,
         ...station
       }
     });
   } catch (error) {
-    logger.error('Error getting station', { 
-      error: error.message, 
-      stationId: req.params.stationId 
+    logger.error('Error getting station', {
+      error: error.message,
+      stationId: req.params.stationId
     });
     res.status(500).json({ error: 'Internal Server Error' });
   }
@@ -79,44 +79,45 @@ app.get('/api/stations/:stationId', (req, res) => {
 // Payment API endpoint - receives payment confirmation
 app.post('/api/payment/complete', (req, res) => {
   const { paymentId } = req.body;
-  
+
   if (!paymentId) {
     return res.status(400).json({
       status: 'error',
       message: 'Missing payment ID'
     });
   }
-  
+
   // In a real implementation, you would validate the payment with a payment provider
   // For this demo, we'll simulate a successful payment
-  
-  // Extract stationId and connectorId from the paymentId 
+
+  // Extract stationId and connectorId from the paymentId
   // Format: payment_stationId_connectorId_timestamp
   const [prefix, stationId, connectorId, timestamp] = paymentId.split('_');
-  
+
   if (!stationId || !connectorId) {
     return res.status(400).json({
       status: 'error',
       message: 'Invalid payment ID format'
     });
   }
-  
-  logger.info('Processing payment', { 
-    paymentId, 
-    stationId, 
-    connectorId 
+
+  logger.info('Processing payment', {
+    paymentId,
+    stationId,
+    connectorId
   });
-  
-  // Generate a random RFID tag ID for this transaction
-  const idTag = `Payment_${paymentId}`;
-  
+
+  // Generate a shorter RFID tag ID for this transaction
+  // Most OCPP implementations limit idTag to 20 characters
+  const idTag = `TEST`;  // Use a predefined valid tag that we know works
+
   // Get the WebSocketServer instance
   const wsServer = WebSocketServer.getInstance();
-  
+
   // Start the transaction remotely
   wsServer.remoteStartTransaction(stationId, connectorId, idTag, (responsePayload) => {
     logger.info('Remote start transaction response', responsePayload);
-    
+
     // Broadcast payment success to frontend clients
     if (global.broadcastToFrontend && responsePayload.status === 'Accepted') {
       global.broadcastToFrontend('payment_update', {
@@ -128,7 +129,7 @@ app.post('/api/payment/complete', (req, res) => {
         timestamp: new Date().toISOString()
       });
     }
-    
+
     if (responsePayload.status === 'Accepted') {
       res.json({
         status: 'success',
@@ -142,6 +143,37 @@ app.post('/api/payment/complete', (req, res) => {
       });
     }
   });
+});
+
+// Endpoint to stop a transaction on a specific connector
+app.post('/api/stations/:stationId/connectors/:connectorId/stop-charging', async (req, res) => {
+  const { stationId, connectorId } = req.params;
+  logger.info(`Received POST request to stop charging for station ${stationId}, connector ${connectorId}`);
+
+  try {
+    // Convert connectorId to number as it comes from URL params
+    const connectorIdNum = parseInt(connectorId, 10);
+    if (isNaN(connectorIdNum)) {
+      return res.status(400).json({ error: 'Invalid connector ID format' });
+    }
+
+    const result = await stationService.stopTransaction(stationId, connectorIdNum);
+
+    if (result.success) {
+      res.status(200).json({ message: 'Stop command initiated successfully.' });
+    } else {
+      // Use 409 Conflict if no active transaction, 500 otherwise?
+      const statusCode = result.message?.includes('No active transaction') ? 409 : 500;
+      res.status(statusCode).json({ error: result.message || 'Failed to initiate stop command.' });
+    }
+  } catch (error) {
+    logger.error('Error processing stop charging request', {
+      error: error.message,
+      stationId,
+      connectorId
+    });
+    res.status(500).json({ error: 'Internal Server Error while stopping transaction.' });
+  }
 });
 
 // Transactions API
@@ -169,9 +201,9 @@ app.get('/api/stations/:chargePointId/transactions', (req, res) => {
       transactions
     });
   } catch (error) {
-    logger.error('Error getting station transactions', { 
-      error: error.message, 
-      chargePointId: req.params.chargePointId 
+    logger.error('Error getting station transactions', {
+      error: error.message,
+      chargePointId: req.params.chargePointId
     });
     res.status(500).json({ error: 'Internal Server Error' });
   }
@@ -187,10 +219,13 @@ const frontendWss = new WS({ noServer: true });
 const ocppServer = WebSocketServer.getInstance();
 ocppServer.initialize(server);
 
+// Initialize stationService with the WebSocketServer instance to break circular dependency
+stationService.initialize(ocppServer);
+
 // Handle all upgrade events
 server.on('upgrade', (request, socket, head) => {
   const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
-  
+
   if (pathname === '/ws') {
     // Frontend WebSocket connections
     logger.info(`Frontend WebSocket connection request received at ${pathname}`);
@@ -209,46 +244,46 @@ frontendWss.on('connection', (client, request) => {
   const id = Math.random().toString(36).substring(2, 10);
   client.id = id;
   client.subscriptions = new Set();
-  
+
   logger.info(`Frontend client connected: ${id}`);
-  
+
   // Send welcome message
-  client.send(JSON.stringify({ 
-    type: 'welcome', 
+  client.send(JSON.stringify({
+    type: 'welcome',
     message: 'Connected to CSMS WebSocket server',
     clientId: id
   }));
-  
+
   // Handle incoming message from frontend client
   client.on('message', (message) => {
     try {
       const parsedMessage = JSON.parse(message.toString());
-      
+
       // Handle subscription requests
       if (parsedMessage.type === 'subscribe' && parsedMessage.stationId) {
         const stationId = parsedMessage.stationId;
         logger.info(`Client ${id} subscribed to station: ${stationId}`);
-        
+
         // Add the stationId to the client's subscriptions
         client.subscriptions.add(stationId);
       }
-      
+
       // Handle unsubscribe requests
       if (parsedMessage.type === 'unsubscribe' && parsedMessage.stationId) {
         const stationId = parsedMessage.stationId;
         logger.info(`Client ${id} unsubscribed from station: ${stationId}`);
-        
+
         // Remove the stationId from the client's subscriptions
         client.subscriptions.delete(stationId);
       }
-      
+
       // Handle other message types as needed
       logger.debug(`Received message from client ${id}:`, parsedMessage);
     } catch (error) {
       logger.error(`Error processing message from client ${id}:`, error);
     }
   });
-  
+
   // Handle client disconnect
   client.on('close', () => {
     logger.info(`Frontend client disconnected: ${id}`);
@@ -258,13 +293,13 @@ frontendWss.on('connection', (client, request) => {
 // Helper function to broadcast messages to frontend clients
 global.broadcastToFrontend = (type, data) => {
   if (!frontendWss) return;
-  
-  const messageStr = JSON.stringify({ 
-    type, 
+
+  const messageStr = JSON.stringify({
+    type,
     data,
     timestamp: new Date().toISOString()
   });
-  
+
   frontendWss.clients.forEach(client => {
     // Only send to clients who are subscribed to this station, or no specific station
     if (client.readyState === client.OPEN) {
@@ -288,4 +323,4 @@ server.listen(PORT, () => {
   logger.info(`Dashboard available at http://localhost:${PORT}/`);
 });
 
-module.exports = app; 
+module.exports = app;

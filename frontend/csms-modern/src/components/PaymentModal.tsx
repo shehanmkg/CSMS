@@ -25,15 +25,14 @@ import {
 } from '@chakra-ui/react';
 import { CheckCircleIcon, WarningIcon } from '@chakra-ui/icons';
 import { ChargingStation, Connector, paymentApi } from '../api/api';
-import { toast } from 'react-toastify';
 
 // Simple QR code component for payment simulation
 const SimpleQRCode: React.FC<{ stationId: string; connectorId: string }> = ({ stationId, connectorId }) => (
-  <Center 
-    bg="blackAlpha.100" 
-    boxSize="200px" 
-    border="2px dashed" 
-    borderColor="gray.300" 
+  <Center
+    bg="blackAlpha.100"
+    boxSize="200px"
+    border="2px dashed"
+    borderColor="gray.300"
     borderRadius="md"
     flexDirection="column"
     p={4}
@@ -59,6 +58,17 @@ interface PaymentModalProps {
 
 type PaymentStatus = 'idle' | 'processing' | 'success' | 'error';
 
+// Helper function to safely format power, handling potential object structure
+const formatPowerValue = (power: number | { value: number; unit?: string } | null | undefined): string => {
+  if (typeof power === 'object' && power !== null && 'value' in power && typeof power.value === 'number') {
+    return `${power.value} ${power.unit || 'kW'}`;
+  }
+  if (typeof power === 'number') {
+    return `${power} kW`;
+  }
+  return 'N/A kW'; // Default or fallback value
+};
+
 const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, onPaymentComplete }) => {
   const [selectedConnector, setSelectedConnector] = useState<Connector | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('idle');
@@ -68,7 +78,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
   // Get connectors ready for payment (in Preparing status)
   const getPreparingConnectors = (): Connector[] => {
     if (!station.connectors) return [];
-    
+
     // Handle both array and object formats
     if (Array.isArray(station.connectors)) {
       return station.connectors.filter(c => c.status === 'Preparing');
@@ -99,7 +109,12 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
 
   const handlePayment = async () => {
     if (!selectedConnector) {
-      toast.error("No connector selected");
+      toast({
+        title: "No connector selected",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
       return;
     }
 
@@ -108,16 +123,21 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
     try {
       // Process payment via API
       const result = await paymentApi.processPayment(
-        station.id, 
+        station.id,
         selectedConnector.id
       );
-      
+
       if (result.success) {
         setTransactionId(result.transactionId || null);
         setPaymentStatus('success');
-        
-        toast.success("Payment successful");
-        
+
+        toast({
+          title: "Payment successful",
+          status: "success",
+          duration: 3000,
+          isClosable: true,
+        });
+
         // Call the callback if provided after a delay to allow user to see the success state
         if (onPaymentComplete) {
           setTimeout(() => {
@@ -126,12 +146,22 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
         }
       } else {
         setPaymentStatus('error');
-        toast.error("Payment failed");
+        toast({
+          title: "Payment failed",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
       }
     } catch (error) {
       console.error("Payment processing error:", error);
       setPaymentStatus('error');
-      toast.error("An error occurred while processing payment");
+      toast({
+        title: "An error occurred while processing payment",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
     }
   };
 
@@ -177,7 +207,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
                 <Select value={selectedConnector?.id || ''} onChange={handleConnectorChange}>
                   {preparingConnectors.map(connector => (
                     <option key={connector.id} value={connector.id}>
-                      Connector {connector.id} - {connector.type} ({connector.power} kW)
+                      Connector {connector.id} - {connector.type} ({formatPowerValue(connector.power)})
                     </option>
                   ))}
                 </Select>
@@ -189,7 +219,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
                 </Box>
               )}
             </Box>
-            
+
             {selectedConnector && (
               <>
                 <Divider />
@@ -205,14 +235,14 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
                   </HStack>
                   <HStack justify="space-between">
                     <Text>Power:</Text>
-                    <Text>{selectedConnector.power} kW</Text>
+                    <Text>{formatPowerValue(selectedConnector.power)}</Text>
                   </HStack>
                   <HStack justify="space-between">
                     <Text>Price:</Text>
                     <Text>$0.25 per kWh</Text>
                   </HStack>
                 </Box>
-                
+
                 <Divider />
                 <Box>
                   <Text fontWeight="bold" mb={3}>Scan to pay:</Text>
@@ -232,7 +262,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
       <ModalOverlay />
       <ModalContent>
         <ModalHeader>
-          {paymentStatus === 'idle' ? 'Start Charging Session' : 
+          {paymentStatus === 'idle' ? 'Start Charging Session' :
            paymentStatus === 'processing' ? 'Processing Payment' :
            paymentStatus === 'success' ? 'Payment Complete' : 'Payment Error'}
         </ModalHeader>
@@ -253,8 +283,8 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
               <Button variant="ghost" mr={3} onClick={onClose}>
                 Cancel
               </Button>
-              <Button 
-                colorScheme="blue" 
+              <Button
+                colorScheme="blue"
                 onClick={handlePayment}
                 isDisabled={!selectedConnector || preparingConnectors.length === 0}
               >
@@ -273,4 +303,4 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, station, o
   );
 };
 
-export default PaymentModal; 
+export default PaymentModal;
